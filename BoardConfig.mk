@@ -85,7 +85,10 @@ TW_MAX_BRIGHTNESS := 255
 TW_DEFAULT_BRIGHTNESS := 150
 TW_SECONDARY_BRIGHTNESS_PATH := "/sys/class/leds/lcd-backlight/brightness"
 TW_NO_SCREEN_BLANK := true
-TW_EXCLUDE_DEFAULT_USB_INIT := true
+# DO NOT exclude the default USB init - setting true means TWRP won't create ffs.mtp
+# while init.recovery.mt6765.rc only created ffs.adb -> log "could not open MTP driver, errno: 2"
+TW_EXCLUDE_DEFAULT_USB_INIT := false
+TW_NO_USB_STORAGE := false
 TW_INCLUDE_NTFS_3G := false
 TW_INCLUDE_FUSE_EXFAT := true
 TW_INCLUDE_FUSE_NTFS := false
@@ -104,19 +107,28 @@ TW_EXTERNAL_STORAGE_PATH := "/external_sd"
 TW_EXTERNAL_STORAGE_MOUNT_POINT := "external_sd"
 TW_INTERNAL_STORAGE_PATH := "/data/media/0"
 TW_INTERNAL_STORAGE_MOUNT_POINT := "data"
-TW_DEFAULT_EXTERNAL_STORAGE := true
+TW_DEFAULT_EXTERNAL_STORAGE := false
+# MT6765 configfs uses mass_storage.0 (not gs0)
+TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.0/lun.%d/file
 
 # Crypto FBE - stock: forcefdeorfbe=/dev/block/.../metadata, filenames_mode=aes-256-cts
+# NOTE: DO NOT use TW_INCLUDE_FBE_METADATA_DECRYPT + BOARD_USES_METADATA_PARTITION
+# those are for Pixel-style /metadata ext4. X625D metadata is raw 32MB (scatter SYS31),
+# with forcefdeorfbe in the fstab. When installed, this appears in the log:
+# "Unexpected value for crypto key location" + "unable to find crypto footer".
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
-TW_INCLUDE_FBE_METADATA_DECRYPT := true
-BOARD_USES_METADATA_PARTITION := true
+TW_CRYPTO_FS_TYPE := "ext4"
+TW_CRYPTO_REAL_BLKDEV := "/dev/block/platform/bootdevice/by-name/userdata"
+TW_CRYPTO_MNT_POINT := "/data"
+TW_CRYPTO_FS_OPTIONS := "nosuid,nodev,noatime,discard,noauto_da_alloc,data=ordered"
+TW_CRYPTO_FS_FLAGS := "0x00000406"
+TW_CRYPTO_KEY_LOC := "/dev/block/platform/bootdevice/by-name/metadata"
 PLATFORM_SECURITY_PATCH := 2020-10-05
 VENDOR_SECURITY_PATCH := 2020-10-05
 PLATFORM_VERSION := 9
 
 # Debug
 TWRP_EVENT_LOGGING := true
-# MT6765 configfs: mass_storage.0, not mass_storage.gs0, and the stock init.rc doesn't create mass_storage
-# for now let TWRP keep its default so MTP/ADB do not fight over the gadget
-#TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.0/lun.%d/file
+# Let TWRP (init.recovery.usb.rc) create the adb+mtp configfs gadget.
+# The custom adb-only gadget from init.recovery.mt6765.rc moved to that file (commented out).

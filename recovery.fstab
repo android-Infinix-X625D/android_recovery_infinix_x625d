@@ -6,12 +6,15 @@
 /recovery    emmc   /dev/block/platform/bootdevice/by-name/recovery
 /system      ext4   /dev/block/platform/bootdevice/by-name/system   flags=display="System";backup=1;wipeduringfactoryreset
 /vendor      ext4   /dev/block/platform/bootdevice/by-name/vendor   flags=display="Vendor";backup=1;wipeduringfactoryreset
-/data        ext4   /dev/block/platform/bootdevice/by-name/userdata   flags=fileencryption=aes-256-cts;storage;wipeingui
-# /metadata is NOT mounted (raw 32MB partition backing forcefdeorfbe, not ext4 - stock doesn't mount it either)
+/data        ext4   /dev/block/platform/bootdevice/by-name/userdata   flags=fileencryption=aes-256-cts;forcefdeorfbe=/dev/block/platform/bootdevice/by-name/metadata;storage;wipeingui
+# /metadata raw 32MB (scatter SYS31) backing forcefdeorfbe, NOT ext4 - don't mount it, just reference it from the /data flags above
 /cache       ext4   /dev/block/platform/bootdevice/by-name/cache   flags=display="Cache";backup=1;wipeduringfactoryreset;wipeingui
 /tranfs      ext4   /dev/block/platform/bootdevice/by-name/tranfs   flags=display="Tranfs";backup=1;wipeingui;nofail
-/external_sd vfat   /dev/block/platform/bootdevice/by-name/sdcard  flags=display="MicroSD";storage;wipeingui;removable;/devices/platform/externdevice*;voldmanaged=sdcard1:auto
-/usb-otg     vfat   /devices/platform/mt_usb*   flags=display="OTG";storage;wipeingui;removable;voldmanaged=usbotg:auto
+# the scatter has NO by-name/sdcard partition - MT6765 MicroSD via mmcblk1, voldmanaged
+/external_sd auto   /dev/block/mmcblk1p1   flags=display="MicroSD";storage;wipeingui;removable;nofail;voldmanaged=sdcard1:auto
+/external_sd auto   /dev/block/mmcblk1     flags=display="MicroSD";storage;wipeingui;removable;nofail;voldmanaged=sdcard1:auto
+/usb-otg     auto   /dev/block/sda1   flags=display="OTG";storage;wipeingui;removable;nofail;voldmanaged=usbotg:auto
+/usb-otg     auto   /dev/block/sda    flags=display="OTG";storage;wipeingui;removable;nofail;voldmanaged=usbotg:auto
 /logo        emmc   /dev/block/platform/bootdevice/by-name/logo
 /expdb       emmc   /dev/block/platform/bootdevice/by-name/expdb
 /nvram       emmc   /dev/block/platform/bootdevice/by-name/nvram   flags=display="Nvram";backup=1
