@@ -115,17 +115,11 @@ TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.
 
 # Crypto FBE - stock: forcefdeorfbe=/dev/block/.../metadata, filenames_mode=aes-256-cts
 # NOTE: DO NOT use TW_INCLUDE_FBE_METADATA_DECRYPT + BOARD_USES_METADATA_PARTITION
-# those are for Pixel-style /metadata ext4. X625D metadata is raw 32MB (scatter SYS31),
-# with forcefdeorfbe in the fstab. When installed, this appears in the log:
-# "Unexpected value for crypto key location" + "unable to find crypto footer".
+# those are for Pixel-style /metadata ext4. X625D metadata is raw 32MB (scatter SYS31).
+# DO NOT use the fstab flag forcefdeorfbe=... either (TWRP R11 9.0: "Unhandled flag")
+# and DO NOT use legacy TW_CRYPTO_* (those are for FDE; they make FBE report "Device not encrypted").
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
-TW_CRYPTO_FS_TYPE := "ext4"
-TW_CRYPTO_REAL_BLKDEV := "/dev/block/platform/bootdevice/by-name/userdata"
-TW_CRYPTO_MNT_POINT := "/data"
-TW_CRYPTO_FS_OPTIONS := "nosuid,nodev,noatime,discard,noauto_da_alloc,data=ordered"
-TW_CRYPTO_FS_FLAGS := "0x00000406"
-TW_CRYPTO_KEY_LOC := "/dev/block/platform/bootdevice/by-name/metadata"
 PLATFORM_SECURITY_PATCH := 2020-10-05
 VENDOR_SECURITY_PATCH := 2020-10-05
 PLATFORM_VERSION := 9
