@@ -1,0 +1,24 @@
+# TWRP fstab untuk Infinix Hot 7 Pro X625D (MT6765, Android 9, A-only, FBE)
+# Source: stock /etc/recovery.fstab from X625D-H623L-P-201015V258
+# Format TWRP: <src> <mnt> <fs> <flags> ...
+
+/system         /system         ext4    ro,barrier=1                                          wait,slotselect
+/vendor        /vendor        ext4    ro,barrier=1                                          wait,slotselect
+/data          /data          ext4    noatime,nosuid,nodev,noauto_da_alloc,discard,errors=panic  wait,check,quota,reservedsize=128M,formattable,resize,fileencryption=aes-256-cts
+/metadata      /metadata      ext4    noatime,nosuid,nodev,noauto_da_alloc,discard           wait,check,formattable
+/cache         /cache         ext4    noatime,nosuid,nodev,noauto_da_alloc,discard           wait,check,formattable
+/tranfs        /tranfs        ext4    noatime,nosuid,nodev,noauto_da_alloc,discard           wait,check,formattable,nofail
+/external_sd   /external_sd   vfat    defaults                                              defaults,voldmanaged=sdcard1:auto
+/usb-otg       /usb-otg       vfat    defaults                                              defaults,voldmanaged=usbotg:auto
+/boot          /boot          emmc    defaults                                              defaults
+/recovery      /recovery      emmc    defaults                                              defaults
+/logo          /logo          emmc    defaults                                              defaults
+/expdb         /expdb         emmc    defaults                                              defaults
+/seccfg        /seccfg        emmc    defaults                                              defaults
+/tee1          /tee1          emmc    defaults                                              defaults
+/tee2          /tee2          emmc    defaults                                              defaults
+/dtbo          /dtbo          emmc    defaults                                              defaults
+/vbmeta        /vbmeta        emmc    defaults                                              defaults
+/nvram         /nvram         emmc    defaults                                              defaults
+/nvdata        /mnt/vendor/nvdata  ext4  noatime,nosuid,nodev,noauto_da_alloc,commit=1,nodelalloc  wait,check,formattable,nofail
+/persist       /mnt/vendor/persist ext4  noatime,nosuid,nodev,noauto_da_alloc,commit=1,nodelalloc  wait,check,formattable,nofail
