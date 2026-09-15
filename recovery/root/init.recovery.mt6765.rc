@@ -40,3 +40,14 @@ on post-fs
     symlink /dev/block/sdb /dev/block/mmcblk0boot1
     symlink /dev/block/mmcblk0boot0 /dev/block/platform/bootdevice/by-name/preloader_a
     symlink /dev/block/mmcblk0boot1 /dev/block/platform/bootdevice/by-name/preloader_b
+
+# experimental DT2W: stock values with gestures on = w:1;m:1;c:1;cc:1; (cc = double-tap)
+# Written twice (boot + post-fs-data) because the proc node only appears after the ~1.8s driver probe.
+# If the driver rejects it, check dmesg for "bad command format" - the init write never fails boot.
+on boot
+    chmod 0666 /proc/gesture_state
+    write /proc/gesture_state "w:1;m:1;c:1;cc:1;"
+
+on property:sys.boot_from_recovery=1
+    chmod 0666 /proc/gesture_state
+    write /proc/gesture_state "w:1;m:1;c:1;cc:1;"
