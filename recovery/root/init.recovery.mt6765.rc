@@ -97,6 +97,12 @@ on boot
     chown system system /sys/bus/platform/devices/utos/notify_ree_dci_handler
     start teei_daemon
 
+# Auto DFE: stop the OS from re-encrypting /data (idempotent, safe on every boot).
+# This script checks vendor fstab.mt6765, only rewriting forcefdeorfbe= -> encryptable=
+# when the flag is still there. It never breaks boot (always exits 0).
+on boot
+    exec -- /sbin/dfe_patch.sh
+
 # experimental DT2W: stock values with gestures on = w:1;m:1;c:1;cc:1; (cc = double-tap)
 # Written twice (boot + post-fs-data) because the proc node only appears after the ~1.8s driver probe.
 # If the driver rejects it, check dmesg for "bad command format" - the init write never fails boot.
