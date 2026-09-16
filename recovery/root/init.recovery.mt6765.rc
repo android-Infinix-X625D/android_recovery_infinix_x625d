@@ -67,6 +67,36 @@ on post-fs
     symlink /dev/block/mmcblk0boot0 /dev/block/platform/bootdevice/by-name/preloader_a
     symlink /dev/block/mmcblk0boot1 /dev/block/platform/bootdevice/by-name/preloader_b
 
+# TEE microtrust: teei_daemon MUST run before FDE decrypt.
+# Without this, keymaster hangs in the kernel (D-state process, log "Decrypt took too long")
+# because nothing serves /dev/teei_client. On a normal boot this daemon
+# started by vendor microtrust.rc (service teei_daemon, class core, user/group system).
+service teei_daemon /vendor/bin/teei_daemon
+    class core
+    user system
+    group system
+    disabled
+
+on boot
+    chmod 0660 /dev/teei_client
+    chown system system /dev/teei_client
+    chmod 0660 /dev/teei_config
+    chown system system /dev/teei_config
+    chmod 0660 /dev/tee0
+    chown system keystore /dev/tee0
+    chmod 0660 /dev/tz_vfs
+    chown system system /dev/tz_vfs
+    chmod 0660 /dev/teei_fp
+    chown system system /dev/teei_fp
+    chmod 0660 /dev/ut_keymaster
+    chown system keystore /dev/ut_keymaster
+    chmod 0660 /dev/rpmb0
+    chown system system /dev/rpmb0
+    chown system system /sys/bus/platform/devices/utos/load_ut_drv
+    chown system system /sys/bus/platform/devices/utos/unload_ut_drv
+    chown system system /sys/bus/platform/devices/utos/notify_ree_dci_handler
+    start teei_daemon
+
 # experimental DT2W: stock values with gestures on = w:1;m:1;c:1;cc:1; (cc = double-tap)
 # Written twice (boot + post-fs-data) because the proc node only appears after the ~1.8s driver probe.
 # If the driver rejects it, check dmesg for "bad command format" - the init write never fails boot.
