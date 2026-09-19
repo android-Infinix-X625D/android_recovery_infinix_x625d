@@ -60,7 +60,7 @@ BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE := ext4
 TARGET_COPY_OUT_VENDOR := vendor
 
 # System-as-root (Android 9, ro.build.system_root_image=true)
-BOARD_BUILD_SYSTEM_ROOT_IMAGE := false
+BOARD_BUILD_SYSTEM_ROOT_IMAGE := true
 
 # AVB - the stock uses vbmeta; recovery must be flashed with --disable-verity --disable-verification
 BOARD_AVB_ENABLE := false
