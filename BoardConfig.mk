@@ -134,6 +134,7 @@ VENDOR_SECURITY_PATCH := 2020-10-05
 PLATFORM_VERSION := 9
 
 # Debug
-TWRP_EVENT_LOGGING := true
+# OFF: true = every tap prints a red coordinate line in Copy Log (noisy when not debugging)
+TWRP_EVENT_LOGGING := false
 # The USB gadget is handled manually in init.recovery.mt6765.rc (adb + mtp.gs0 + ffs.mtp)
 # because the default init.recovery.usb.rc never brings up the musb-hdrc UDC on this device.
