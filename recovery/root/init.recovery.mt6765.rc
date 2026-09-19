@@ -111,9 +111,13 @@ on property:twrp.decrypt.done=true
 # Without this, keymaster hangs in the kernel (D-state process, log "Decrypt took too long")
 # because nothing serves /dev/teei_client. On a normal boot this daemon
 # started by vendor microtrust.rc (service teei_daemon, class core, user/group system).
-# NOTE: path /vendor/bin/teei_daemon (stock blob), not /sbin (cactus style).
-# seclabel is REQUIRED - without it init never registers the service (same issue as dt2w_enable).
-service teei_daemon /vendor/bin/teei_daemon
+# NOTE: use the /sbin/teei_daemon copy (stock blob whose INTERP already
+# patched /system/bin/linker64 -> /sbin/linker64). The stock INTERP does not run inside
+# recovery: the ramdisk has no /system/bin/linker64 (the recovery linker lives in
+# /sbin/linker64), causing execve ENOENT + a crash loop every 5 seconds
+# ("init.svc.teei_daemon=restarting", slow boot, dead TEE, failed decrypt).
+# /vendor/bin is NOT used: the stock vendor partition mount hides it at boot.
+service teei_daemon /sbin/teei_daemon
     class core
     user system
     group system
