@@ -117,10 +117,16 @@ on property:twrp.decrypt.done=true
 # /sbin/linker64), causing execve ENOENT + a crash loop every 5 seconds
 # ("init.svc.teei_daemon=restarting", slow boot, dead TEE, failed decrypt).
 # /vendor/bin is NOT used: the stock vendor partition mount hides it at boot.
-# user/group SYSTEM exactly like stock (microtrust.rc): the microtrust TEE authenticates
-# client uid for DCIH - strong bet yesterday's -1000 rejection came from running the daemon
-# as root. Stock: user system + binary mode 755.
-# (User-root attempt: it ran but signature was rejected; now match stock.)
+# DECRYPT STATUS (2026-09-19, live verification, repack-4e318eb build):
+# FDE footer read, UT HAL loaded, teei_daemon RUNNING as system and
+# talking to the TEE (tz_vfs_read) and thh dirs replicated — result unchanged:
+# "Error starting keymaster signature transaction: -1000" untuk
+# default_password or the correct PIN. System (same/orange boot state) CAN
+# unwrap -> this rejection is specific to the recovery context (microtrust TA policy),
+# missing uids/files either. CONCLUSION: FDE decryption of X625D via this custom
+# recovery is IMPOSSIBLE. teei stays started so keymaster fails FAST (-1000),
+# not a D-state kernel hang (what used to slow booting down).
+# The supported path: DFE (dfe_patch service, proven working) + unencrypted data.
 service teei_daemon /sbin/teei_daemon
     class core
     user system
@@ -129,7 +135,14 @@ service teei_daemon /sbin/teei_daemon
     seclabel u:r:recovery:s0
 
 on boot
+    # /sbin in this build ships mode 750 root:root - without the traverse bit, user
+    # system cannot exec anything inside it (EACCES). Open it so the
+    # user system (teei) to run. Verified live over adb.
+    chmod 755 /sbin
     chmod 0755 /sbin/teei_daemon
+    chmod 0755 /sbin/linker64 /sbin/linker
+    chmod 0755 /sbin/libc.so /sbin/libm.so /sbin/libdl.so
+    chmod 0755 /sbin/libc++.so /sbin/liblog.so /sbin/libcutils.so
     chmod 0660 /dev/teei_client
     chown system system /dev/teei_client
     chmod 0660 /dev/teei_config
