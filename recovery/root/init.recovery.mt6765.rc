@@ -117,10 +117,13 @@ on property:twrp.decrypt.done=true
 # /sbin/linker64), causing execve ENOENT + a crash loop every 5 seconds
 # ("init.svc.teei_daemon=restarting", slow boot, dead TEE, failed decrypt).
 # /vendor/bin is NOT used: the stock vendor partition mount hides it at boot.
+# user/group ROOT (not system): the ramdisk file is mode 750 root:root,
+# user system -> execve EACCES "Permission denied" + crash loop (dmesg proof).
+# Follow the cactus pattern (user root, group root) - the daemon can still open /dev/teei_*.
 service teei_daemon /sbin/teei_daemon
     class core
-    user system
-    group system
+    user root
+    group root
     disabled
     seclabel u:r:recovery:s0
 
@@ -145,10 +148,16 @@ on boot
     start teei_daemon
 
 # Auto DFE: stop the OS from re-encrypting /data (idempotent, safe on every boot).
-# This script checks vendor fstab.mt6765, only rewriting forcefdeorfbe= -> encryptable=
-# when the flag is still there. It never breaks boot (always exits 0).
+# Run as a oneshot service (NOT `exec` in `on boot`): proven in
+# build a512309: `exec -- /sbin/dfe_patch.sh` never ran (no log at all),
+# /tmp/dfe_patch.log) while the oneshot service (dt2w_enable) runs normally.
+service dfe_patch /sbin/dfe_patch.sh
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
 on boot
-    exec -- /sbin/dfe_patch.sh
+    start dfe_patch
 
 # DT2W (NVT36xxx-ts / NT36672A, MT6765) — based on the reference module
 # android_device_infinix_X625D-module_dt2w (findings from ADB debugging):
