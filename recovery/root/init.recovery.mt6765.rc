@@ -70,15 +70,55 @@ on post-fs
     symlink /dev/block/mmcblk0boot0 /dev/block/platform/bootdevice/by-name/preloader_a
     symlink /dev/block/mmcblk0boot1 /dev/block/platform/bootdevice/by-name/preloader_b
 
+# MT6765 FDE decrypt stack (follows the working Xiaomi cactus pattern, same SoC):
+# hwservicemanager + servicemanager must run before keymaster-3-0,
+# keymaster-3-0 + teei_daemon start on ro.crypto.state=encrypted
+# stop after twrp.decrypt.done=true (saves RAM and avoids hangs).
+on init
+    start hwservicemanager
+    start servicemanager
+
+service hwservicemanager /sbin/hwservicemanager
+    user root
+    group root
+    disabled
+    onrestart setprop hwservicemanager.ready false
+    seclabel u:r:recovery:s0
+
+service servicemanager /sbin/servicemanager
+    user root
+    group root
+    disabled
+    onrestart setprop servicemanager.ready false
+    seclabel u:r:recovery:s0
+
+service keymaster-3-0 /sbin/android.hardware.keymaster@3.0-service
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+on property:ro.crypto.state=encrypted
+    start teei_daemon
+    start keymaster-3-0
+
+on property:twrp.decrypt.done=true
+    stop teei_daemon
+    stop keymaster-3-0
+
 # TEE microtrust: teei_daemon MUST run before FDE decrypt.
 # Without this, keymaster hangs in the kernel (D-state process, log "Decrypt took too long")
 # because nothing serves /dev/teei_client. On a normal boot this daemon
 # started by vendor microtrust.rc (service teei_daemon, class core, user/group system).
+# NOTE: path /vendor/bin/teei_daemon (stock blob), not /sbin (cactus style).
+# seclabel is REQUIRED - without it init never registers the service (same issue as dt2w_enable).
 service teei_daemon /vendor/bin/teei_daemon
     class core
     user system
     group system
     disabled
+    seclabel u:r:recovery:s0
 
 on boot
     chmod 0660 /dev/teei_client
