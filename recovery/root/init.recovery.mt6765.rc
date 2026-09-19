@@ -117,17 +117,19 @@ on property:twrp.decrypt.done=true
 # /sbin/linker64), causing execve ENOENT + a crash loop every 5 seconds
 # ("init.svc.teei_daemon=restarting", slow boot, dead TEE, failed decrypt).
 # /vendor/bin is NOT used: the stock vendor partition mount hides it at boot.
-# user/group ROOT (not system): the ramdisk file is mode 750 root:root,
-# user system -> execve EACCES "Permission denied" + crash loop (dmesg proof).
-# Follow the cactus pattern (user root, group root) - the daemon can still open /dev/teei_*.
+# user/group SYSTEM exactly like stock (microtrust.rc): the microtrust TEE authenticates
+# client uid for DCIH - strong bet yesterday's -1000 rejection came from running the daemon
+# as root. Stock: user system + binary mode 755.
+# (User-root attempt: it ran but signature was rejected; now match stock.)
 service teei_daemon /sbin/teei_daemon
     class core
-    user root
-    group root
+    user system
+    group system
     disabled
     seclabel u:r:recovery:s0
 
 on boot
+    chmod 0755 /sbin/teei_daemon
     chmod 0660 /dev/teei_client
     chown system system /dev/teei_client
     chmod 0660 /dev/teei_config
@@ -142,6 +144,11 @@ on boot
     chown system keystore /dev/ut_keymaster
     chmod 0660 /dev/rpmb0
     chown system system /dev/rpmb0
+    # Other TEE nodes like stock microtrust.rc (defensive: init moves on if absent)
+    chmod 0660 /dev/emmcrpmb0
+    chown system system /dev/emmcrpmb0
+    chmod 0660 /dev/utr_tui
+    chown system system /dev/utr_tui
     chown system system /sys/bus/platform/devices/utos/load_ut_drv
     chown system system /sys/bus/platform/devices/utos/unload_ut_drv
     chown system system /sys/bus/platform/devices/utos/notify_ree_dci_handler
