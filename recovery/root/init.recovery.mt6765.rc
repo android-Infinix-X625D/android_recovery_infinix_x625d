@@ -106,13 +106,26 @@ on boot
 on boot
     exec -- /sbin/dfe_patch.sh
 
-# experimental DT2W: stock values with gestures on = w:1;m:1;c:1;cc:1; (cc = double-tap)
-# Written twice (boot + post-fs-data) because the proc node only appears after the ~1.8s driver probe.
-# If the driver rejects it, check dmesg for "bad command format" - the init write never fails boot.
-on boot
-    chmod 0666 /proc/gesture_state
-    write /proc/gesture_state "w:1;m:1;c:1;cc:1;"
+# DT2W (NVT36xxx-ts / NT36672A, MT6765) — based on the reference module
+# android_device_infinix_X625D-module_dt2w (findings from ADB debugging):
+#  - Write node = /proc/gesture_function (NOT /proc/gesture_state, that is read-only status).
+#  - Format = EXACTLY 3 bytes with no newline, e.g. "cc1" = enable Double Tap
+#    (dmesg: "CTP-gesture buff 0:c 1:c 2:1!!!").
+#  - NEVER write "cc:1" / "w:1;m:1;c:1;cc:1;" (colon/comma format) — it hangs the driver.
+# Run via a oneshot service (/sbin/dt2w_enable.sh script) because the proc node
+# the node only appears after driver probe (~1.8s+): a plain `write` in `on boot` may run
+# BEFORE the node exists, then fail silently without retry. The service does not block boot.
+# Verify with: adb shell "cat /proc/gesture_state; cat /tmp/dt2w.log"
+# (should contain "cc:1").
+service dt2w_enable /sbin/dt2w_enable.sh
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
 
-on property:sys.boot_from_recovery=1
-    chmod 0666 /proc/gesture_state
-    write /proc/gesture_state "w:1;m:1;c:1;cc:1;"
+# Triggered when the recovery is already running (NOT on boot): the recovery binary disables
+# gesture (ctp_gesture_fun_enable=0) at ~2.6s. Enabling must happen AFTER that,
+# script still sleeps+verifies+rewrites. The seclabel is REQUIRED — without it
+# init never registers the service in this build (debug result: a service without seclabel
+# simply never shows up in init.svc.*).
+on property:init.svc.recovery=running
+    start dt2w_enable
