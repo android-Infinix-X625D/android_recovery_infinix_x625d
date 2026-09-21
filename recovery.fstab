@@ -7,7 +7,10 @@
 
 /boot        emmc   /dev/block/platform/bootdevice/by-name/boot
 /recovery    emmc   /dev/block/platform/bootdevice/by-name/recovery
-/system      ext4   /dev/block/platform/bootdevice/by-name/system   flags=display="System";backup=1;wipeduringfactoryreset
+# System-as-root: system is mounted ONLY at /system_root. Do NOT add a
+# /system pointing at the same partition: it creates a duplicate "System" entry in the Wipe menu,
+# mounting /system fails (Invalid argument) and OrangeFox cannot find
+# build.prop (no_os_warning). /system is accessed via a symlink to /system_root/system.
 /system_root ext4   /dev/block/platform/bootdevice/by-name/system   flags=display="System";backup=1;wipeduringfactoryreset
 /system_image emmc   /dev/block/platform/bootdevice/by-name/system   flags=display="System Image";backup=1;flashimg=1
 /vendor      ext4   /dev/block/platform/bootdevice/by-name/vendor   flags=display="Vendor";backup=1;wipeduringfactoryreset
