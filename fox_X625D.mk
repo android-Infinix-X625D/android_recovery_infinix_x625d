@@ -48,6 +48,9 @@ FOX_RECOVERY_SYSTEM_PARTITION := /dev/block/platform/bootdevice/by-name/system
 FOX_RECOVERY_VENDOR_PARTITION := /dev/block/platform/bootdevice/by-name/vendor
 OF_USE_GREEN_LED := 0
 OF_PATCH_AVB20 := 1
+# The OrangeFox splash changer fails on this device (empty unpack path cascades into a
+# repack "unknown compression type") -> hide the menu to avoid confusing users
+OF_NO_SPLASH_CHANGE := 1
 # A-only: FOX_AB_DEVICE defaults to 0, no need to set it explicitly
 FOX_DELETE_AROMAFM := 1
 FOX_ENABLE_APP_MANAGER := 1
