@@ -199,17 +199,20 @@ on boot
     chown system system /sys/bus/platform/devices/utos/notify_ree_dci_handler
     start teei_daemon
 
-# Auto DFE: stop the OS from re-encrypting /data (idempotent, safe on every boot).
-# Run as a oneshot service (NOT `exec` in `on boot`): proven in
-# build a512309: `exec -- /sbin/dfe_patch.sh` never ran (no log at all),
-# /tmp/dfe_patch.log) while the oneshot service (dt2w_enable) runs normally.
+# Auto DFE: DISABLED as an automatic step (2026-10-26): FDE decrypt now works
+# (see the DECRYPT STATUS block above), so the default journey is
+# "Format Data -> system reboot -> ROM force-encrypts again -> recovery
+# decrypts via PIN" - stock security end-to-end.
+# dfe_patch.sh stays in /sbin as a MANUAL escape hatch only: run it once
+# from the recovery terminal if the TEE/decrypt chain ever breaks after a
+# future vendor/firmware reflash. It is idempotent (skips when the vendor
+# fstab is already `encryptable=` - the currently-installed vendor is
+# already patched, so a plain Format Data keeps data unencrypted until a
+# full ROM/firmware flash restores `forcefdeorfbe=`).
 service dfe_patch /sbin/dfe_patch.sh
     disabled
     oneshot
     seclabel u:r:recovery:s0
-
-on boot
-    start dfe_patch
 
 # DT2W (NVT36xxx-ts / NT36672A, MT6765) — based on the reference module
 # android_device_infinix_X625D-module_dt2w (findings from ADB debugging):
