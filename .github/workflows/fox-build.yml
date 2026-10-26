@@ -1,0 +1,252 @@
+name: Build OrangeFox X625D
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Build type (pre-release = artifact only, no tag; release = stable GitHub Release)"
+        type: choice
+        required: true
+        default: "pre-release"
+        options:
+          - pre-release
+          - release
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout device tree
+      uses: actions/checkout@v5
+      with:
+        path: device-tree
+
+    - name: Free space
+      run: |
+        sudo apt-get clean
+        df -h
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+        df -h
+
+    - name: Setup Java 8 for Android 9
+      uses: actions/setup-java@v5
+      with:
+        distribution: 'zulu'
+        java-version: '8'
+
+    - name: Cache APT packages (saves ~3-5 min per run)
+      uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: git python3 android-tools-adb bc bison build-essential curl flex g++-multilib gcc-multilib gnupg gperf imagemagick lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev cpio ccache
+        version: 1.0
+
+    - name: Install deps (fast, no full apt update)
+      run: |
+        # The packages above were restored from cache by the previous step.
+        # This step only handles what jammy lacks + a fast setup.
+        # Ubuntu 22.04 no longer provides libncurses5 -> pull from focal (needed by the Android 9 header-abi-dumper)
+        if [ ! -f /lib/x86_64-linux-gnu/libncurses.so.5 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libncurses.so.5 ]; then
+          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.2-0ubuntu2_amd64.deb -O /tmp/libtinfo5.deb
+          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.2-0ubuntu2_amd64.deb -O /tmp/libncurses5.deb
+          sudo dpkg -i /tmp/libtinfo5.deb /tmp/libncurses5.deb || sudo apt-get -f install -y
+        fi
+        ls -lh /lib/x86_64-linux-gnu/libncurses* /usr/lib/x86_64-linux-gnu/libncurses* || true
+        # Android 9 wajib default python = python2 (check_radio_versions.py masih print tanpa kurung)
+        # Ubuntu 22.04 no longer provides python2 -> pull from the focal repo (jammy dropped python2)
+        if [ ! -x /usr/bin/python2 ] && [ ! -x /usr/bin/python2.7 ]; then
+          echo "deb http://archive.ubuntu.com/ubuntu/ focal universe" | sudo tee /etc/apt/sources.list.d/focal-universe.list
+          sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/focal-universe.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+          sudo apt-get install -y --no-install-recommends python2 python2.7 python2.7-minimal libpython2.7-minimal libpython2.7-stdlib || sudo apt-get install -y python2.7
+          sudo rm -f /etc/apt/sources.list.d/focal-universe.list
+        fi
+        sudo ln -sf /usr/bin/python2 /usr/bin/python || sudo ln -sf /usr/bin/python2.7 /usr/bin/python
+        python --version
+        python3 --version
+        mkdir -p ~/bin
+        if [ ! -x ~/bin/repo ]; then
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+        fi
+        echo "$HOME/bin" >> $GITHUB_PATH
+        git config --global user.name "gh-action"
+        git config --global user.email "gh-action@local"
+        git config --global color.ui false
+
+    - name: Sync OrangeFox 9.0 legacy (for Android 9 X625D)
+      run: |
+        git clone --depth=1 https://gitlab.com/OrangeFox/sync.git OrangeFox_sync
+        ls -la OrangeFox_sync/ OrangeFox_sync/legacy/patches/
+        chmod +x OrangeFox_sync/legacy/orangefox_sync_legacy.sh
+        # workaround: the legacy script looks for patches in patches/, while the 9.0 patch lives in legacy/patches/
+        mkdir -p OrangeFox_sync/patches
+        cp OrangeFox_sync/legacy/patches/patch-manifest-fox_9.0.diff OrangeFox_sync/patches/ || true
+        cd OrangeFox_sync
+        # a cached fox/ dir from a previous run can be corrupt (error: bootable/recovery/.git unsupported checkout state)
+        # when .repo already exists, clean the checkout state first so repo sync can --force-sync
+        if [ -d "$GITHUB_WORKSPACE/fox/.repo" ]; then
+          cd "$GITHUB_WORKSPACE/fox" || true
+          repo forall -c 'git am --abort 2>/dev/null || true; git rebase --abort 2>/dev/null || true; git reset --hard 2>/dev/null || true; git clean -fdx 2>/dev/null || true' || true
+          # drop the project that corrupts most often (from my logs)
+          rm -rf "$GITHUB_WORKSPACE/fox/bootable/recovery/.git" || true
+          cd "$GITHUB_WORKSPACE/OrangeFox_sync" || cd OrangeFox_sync || true
+          cd $GITHUB_WORKSPACE/OrangeFox_sync
+        fi
+        ./legacy/orangefox_sync_legacy.sh --branch 9.0 --path $GITHUB_WORKSPACE/fox || {
+          echo "First sync failed, retrying with a force-sync..."
+          cd $GITHUB_WORKSPACE/fox
+          repo sync -j1 --fail-fast --force-sync bootable/recovery || rm -rf $GITHUB_WORKSPACE/fox/bootable/recovery
+          cd $GITHUB_WORKSPACE/OrangeFox_sync
+          ./legacy/orangefox_sync_legacy.sh --branch 9.0 --path $GITHUB_WORKSPACE/fox
+        }
+        df -h
+
+    - name: Copy device tree X625D
+      run: |
+        mkdir -p fox/device/infinix/X625D
+        cp -r device-tree/* fox/device/infinix/X625D/
+        ls -R fox/device/infinix/X625D | head -n 50
+        ls -lh fox/device/infinix/X625D/prebuilt/
+
+    - name: Setup ccache (incremental, no run_id)
+      uses: hendrikmuhs/ccache-action@v1.2.24
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/.ccache
+      with:
+        key: fox90-X625D
+        restore-keys: fox90-X625D
+        max-size: 5G
+
+    - name: Build recovery
+      working-directory: fox
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/.ccache
+      run: |
+        export LC_ALL=C
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
+        export FOX_BUILD_DEVICE=X625D
+        export OF_USE_LZMA_COMPRESSION=1
+        export FOX_DRASTIC_SIZE_REDUCTION=1
+        export USE_CCACHE=1
+        export CCACHE_EXEC=$(which ccache)
+        ccache -z
+        source build/envsetup.sh
+        lunch omni_X625D-eng
+        mka recoveryimage -j$(nproc --all)
+        ccache -s
+        ls -lh out/target/product/X625D/recovery.img
+        echo "X625D OrangeFox unofficial $(date -u)" > out/target/product/X625D/build-info.txt
+        # Device-tree commit info so the .img is traceable back to its source commit.
+        # (the device tree is checked out without .git and `.git` does NOT follow `cp *`,
+        # so read the git metadata directly from $GITHUB_WORKSPACE/device-tree.)
+        DT_SHORT=$(git -C $GITHUB_WORKSPACE/device-tree rev-parse --short HEAD)
+        DT_SHA=$(git -C $GITHUB_WORKSPACE/device-tree rev-parse HEAD)
+        DT_MSG=$(git -C $GITHUB_WORKSPACE/device-tree log -1 --pretty=%s)
+        echo "$DT_SHORT $DT_MSG" >> out/target/product/X625D/build-info.txt
+        echo "$DT_SHA" >> out/target/product/X625D/build-info.txt
+        cat out/target/product/X625D/build-info.txt
+
+    - name: Name artifacts and compute the tag (version pulled from OrangeFox)
+      run: |
+        # Version scheme: <fox base>-<date>, e.g. 11.1-20261023
+        # The maintainer patch suffix (FOX_MAINTAINER_PATCH_VERSION) is intentionally
+        # not used in the tag: the date already distinguishes runs. (It still shows
+        # up on the recovery's own screen, straight from the device tree.)
+        # Base version is never hardcoded: extracted (generic "R<maior>.<minor>")
+        # from OrangeFox itself, in order of accuracy:
+        #   1. variables.h of the recovery source that this run actually synced
+        #      and will compile (FOX_MAIN_VERSION_STR).
+        #   2. FOX_BASE_VERSION in the sync script used for this run.
+        #   3. Live fetch from the OrangeFox repo (fox_9.0 branch) via GitLab API.
+        FOX_BASE_RAW=""
+        if [ -f "$GITHUB_WORKSPACE/fox/bootable/recovery/variables.h" ]; then
+          FOX_BASE_RAW="$(grep -m1 -oE 'R[0-9]+\.[0-9]+' "$GITHUB_WORKSPACE/fox/bootable/recovery/variables.h")"
+        fi
+        if [ -z "$FOX_BASE_RAW" ] && [ -f "OrangeFox_sync/legacy/orangefox_sync_legacy.sh" ]; then
+          FOX_BASE_RAW="$(grep -m1 'FOX_BASE_VERSION' OrangeFox_sync/legacy/orangefox_sync_legacy.sh | grep -oE 'R[0-9]+\.[0-9]+')"
+        fi
+        if [ -z "$FOX_BASE_RAW" ]; then
+          FOX_BASE_RAW="$(curl -sfL "https://gitlab.com/api/v4/projects/OrangeFox%2Fbootable%2FRecovery/repository/files/variables.h/raw?ref=fox_9.0" | grep -m1 -oE 'R[0-9]+\.[0-9]+' || true)"
+        fi
+        # Last resort fallback so the job still publishes with a placeholder
+        [ -z "$FOX_BASE_RAW" ] && FOX_BASE_RAW="R0.0"
+        FOX_BASE="${FOX_BASE_RAW#R}"
+        echo "OrangeFox base version detected: R$FOX_BASE"
+        echo "FOX_BASE=$FOX_BASE" >> $GITHUB_ENV
+        # Stamp the detected version into build-info (keeps the existing timestamp)
+        sed -i "1s/unofficial/unofficial R$FOX_BASE/" fox/out/target/product/X625D/build-info.txt
+        VERSION="${FOX_BASE}"
+        DATE=$(date +'%Y%m%d')
+        SHORT=$(git -C device-tree rev-parse --short HEAD)
+        BRANCH="${GITHUB_REF_NAME}"
+        TAG="${VERSION}-$DATE"
+        # Only the "release" type creates a tag/release, so date collisions never
+        # affect "pre-release" builds. If today's tag already exists (an earlier
+        # release placed it), append -2, -3, ... to keep it unique.
+        if [ "${{ inputs.release_type }}" = "release" ]; then
+          while git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$TAG" | grep -q .; do
+            n=$(( ${n:-1} + 1 ))
+            TAG="${VERSION}-$DATE-$n"
+          done
+        fi
+        if [ "${{ inputs.release_type }}" = "release" ]; then
+          # stable release: plain name OrangeFox-X625D-<TAG>.img (TAG = 11.1-YYYYMMDD)
+          FILENAME="OrangeFox-X625D-$TAG"
+        else
+          # pre-release: artifact only (no tag/release) - add commit ID to the name
+          FILENAME="OrangeFox-X625D-$TAG-prerelease-$SHORT"
+        fi
+        BUILDINFO="build-info-$TAG.txt"
+        echo "TAG=$TAG" >> $GITHUB_ENV
+        echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+        echo "RELEASE_TYPE=${{ inputs.release_type }}" >> $GITHUB_ENV
+        echo "DT_SHORT=$SHORT" >> $GITHUB_ENV
+        echo "FILENAME=$FILENAME" >> $GITHUB_ENV
+        echo "BUILDINFO=$BUILDINFO" >> $GITHUB_ENV
+        cp fox/out/target/product/X625D/recovery.img "$FILENAME.img"
+        cp fox/out/target/product/X625D/build-info.txt "$BUILDINFO"
+        ls -lh "$FILENAME.img" "$BUILDINFO"
+        cat "$BUILDINFO"
+
+    - name: Upload the renamed image + build info as workflow artifact
+      # pre-release consumes this directly; for release the same files are also
+      # attached to the GitHub Release by the Publish step.
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ env.FILENAME }}
+        path: |
+          ${{ env.FILENAME }}.img
+          ${{ env.BUILDINFO }}
+
+    - name: Prepare release notes
+      if: inputs.release_type == 'release'
+      run: |
+        cd device-tree
+        MSG=$(git log -1 --pretty=%s)
+        SHA=$(git rev-parse HEAD)
+        SHORT=$(git rev-parse --short HEAD)
+        BRANCH="${{ env.BRANCH }}"
+        REPO="${GITHUB_REPOSITORY}"
+        cat > $GITHUB_WORKSPACE/release-notes.md <<EOF
+        Unofficial OrangeFox Recovery for Infinix X625D ${{ env.TAG }}
+
+        Device tree: [\`${BRANCH}\`](https://github.com/${REPO}/tree/${BRANCH}) — [\`${SHORT}\`](https://github.com/${REPO}/commit/${SHA}) ${MSG}
+        EOF
+        cat $GITHUB_WORKSPACE/release-notes.md
+
+    - name: Publish release
+      if: inputs.release_type == 'release'
+      uses: softprops/action-gh-release@v3
+      with:
+        tag_name: ${{ env.TAG }}
+        name: ${{ env.TAG }}
+        body_path: release-notes.md
+        prerelease: false
+        files: |
+          ${{ env.FILENAME }}.img
+          ${{ env.BUILDINFO }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
