@@ -69,6 +69,15 @@ on post-fs
     symlink /dev/block/sdb /dev/block/mmcblk0boot1
     symlink /dev/block/mmcblk0boot0 /dev/block/platform/bootdevice/by-name/preloader_a
     symlink /dev/block/mmcblk0boot1 /dev/block/platform/bootdevice/by-name/preloader_b
+    # TA store prerequisites - mount persist EXACTLY like the stock fstab does
+    # (stock: /mnt/vendor/persist), before teei_daemon/keymaster start.
+    mkdir /mnt/vendor/persist
+    mount ext4 /dev/block/platform/bootdevice/by-name/persist /mnt/vendor/persist
+    mkdir /mnt/vendor/persist/rpmb
+    chown system system /mnt/vendor/persist/rpmb
+    chmod 0771 /mnt/vendor/persist/rpmb
+    chown system system /mnt/vendor/persist
+    chmod 0771 /mnt/vendor/persist
 
 # MT6765 FDE decrypt stack (follows the working Xiaomi cactus pattern, same SoC):
 # hwservicemanager + servicemanager must run before keymaster-3-0,
@@ -101,7 +110,18 @@ service keymaster-3-0 /sbin/android.hardware.keymaster@3.0-service
 
 on property:ro.crypto.state=encrypted
     start teei_daemon
-    start keymaster-3-0
+    # keymaster-3-0 is started by fix_fde_env AFTER the microtrust TA store
+    # exists (starting it earlier makes it die with "TA is not installed"
+    # because it fires before post-fs-data).
+on post-fs-data
+    start fix_fde_env
+
+service fix_fde_env /sbin/sh /sbin/fix_fde_env.sh
+    user root
+    group root system
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
 
 on property:twrp.decrypt.done=true
     stop teei_daemon
@@ -117,16 +137,28 @@ on property:twrp.decrypt.done=true
 # /sbin/linker64), causing execve ENOENT + a crash loop every 5 seconds
 # ("init.svc.teei_daemon=restarting", slow boot, dead TEE, failed decrypt).
 # /vendor/bin is NOT used: the stock vendor partition mount hides it at boot.
-# DECRYPT STATUS (2026-09-19, live verification, repack-4e318eb build):
-# FDE footer read, UT HAL loaded, teei_daemon RUNNING as system and
-# talking to the TEE (tz_vfs_read) and thh dirs replicated — result unchanged:
-# "Error starting keymaster signature transaction: -1000" untuk
-# default_password or the correct PIN. System (same/orange boot state) CAN
-# unwrap -> this rejection is specific to the recovery context (microtrust TA policy),
-# missing uids/files either. CONCLUSION: FDE decryption of X625D via this custom
-# recovery is IMPOSSIBLE. teei stays started so keymaster fails FAST (-1000),
-# not a D-state kernel hang (what used to slow booting down).
-# The supported path: DFE (dfe_patch service, proven working) + unencrypted data.
+# DECRYPT STATUS (2026-10-26, LIVE VERIFIED - DECRYPTION WORKS):
+# FDE decrypt SUCCEEDS on stock-encrypted /data (PIN/PoL via password page,
+# default_password auto if no PIN). Unlock chain (all live-verified):
+#   1. persist must be mounted first (/mnt/vendor/persist, stock path) and
+#      /sbin/teei_daemon must be exec 0755 (cpio mode or early chid chmod),
+#      else teei crash-loops (execve EACCES) and decryption hangs in D-state.
+#   2. The microtrust TA store must exist BEFORE keymaster-3-0 starts:
+#      mount /vendor (TWRP's scanner may hold the device: retry) and expose
+#      the *.ta blobs in /data/vendor/thh/{ta,tee/tas} - done by
+#      /sbin/fix_fde_env.sh, which also requests the HAL start afterwards.
+#   3. CRITICAL kernel detail (MTK dm-crypt patch, CONFIG_MTK_HW_FDE):
+#      crypt_ctr() rejects any dm-crypt table whose dev path does NOT
+#      contain "bootdevice" (or "externdevice"/"vold"). TWRP resolves the
+#      by-name symlink to /dev/block/mmcblk0p37, which fails crypt_dev_id()
+#      with type -1 -> "crypt: Unknown error"/"Cannot load dm-crypt mapping
+#      table" no matter what the password is. Fix: /sbin/fix_fde_env.sh
+#      replaces by-name/userdata symlink with a real device node of the
+#      same name so TWRP keeps the full by-name path -> "type: 0".
+#   Verified live: "dev path: /dev/block/platform/bootdevice/by-name/userdata,
+#   type: 0" (dmesg), mount data OK, (data listing shows the real contents),
+#   twrp.decrypt.done=true, ro.crypto.fs_crypto_blkdev=/dev/block/dm-0.
+# DFE (dfe_patch.sh) remains as a fallback for unencrypted/FBE-only setups.
 service teei_daemon /sbin/teei_daemon
     class core
     user system
