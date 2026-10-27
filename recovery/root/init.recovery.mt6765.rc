@@ -137,6 +137,13 @@ on property:twrp.decrypt.done=true
 # /sbin/linker64), causing execve ENOENT + a crash loop every 5 seconds
 # ("init.svc.teei_daemon=restarting", slow boot, dead TEE, failed decrypt).
 # /vendor/bin is NOT used: the stock vendor partition mount hides it at boot.
+#
+# 2026-10-27 CI-build regression: the ramdisk cpio modes are 750 root:root
+# and the linker search paths (/system/lib64, /vendor/lib64) do not exist in
+# recovery -> execve EACCES (uid system vs 750 root:root interp) and then
+# "CANNOT LINK EXECUTABLE: library libcutils.so not found". Run the service
+# through the root wrapper /sbin/teei_daemon.sh which exports
+# LD_LIBRARY_PATH=/sbin and execs the stock blob (see wrapper comments).
 # DECRYPT STATUS (2026-10-26, LIVE VERIFIED - DECRYPTION WORKS):
 # FDE decrypt SUCCEEDS on stock-encrypted /data (PIN/PoL via password page,
 # default_password auto if no PIN). Unlock chain (all live-verified):
@@ -159,10 +166,10 @@ on property:twrp.decrypt.done=true
 #   type: 0" (dmesg), mount data OK, (data listing shows the real contents),
 #   twrp.decrypt.done=true, ro.crypto.fs_crypto_blkdev=/dev/block/dm-0.
 # DFE (dfe_patch.sh) remains as a fallback for unencrypted/FBE-only setups.
-service teei_daemon /sbin/teei_daemon
+service teei_daemon /sbin/sh /sbin/teei_daemon.sh
     class core
-    user system
-    group system
+    user root
+    group root
     disabled
     seclabel u:r:recovery:s0
 
