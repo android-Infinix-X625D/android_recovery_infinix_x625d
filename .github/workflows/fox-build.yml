@@ -150,6 +150,8 @@ jobs:
         cat out/target/product/X625D/build-info.txt
 
     - name: Name artifacts and compute the tag (version pulled from OrangeFox)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         # Version scheme: <fox base>-<date>, e.g. 11.1-20261023
         # The maintainer patch suffix (FOX_MAINTAINER_PATCH_VERSION) is intentionally
@@ -183,15 +185,78 @@ jobs:
         SHORT=$(git -C device-tree rev-parse --short HEAD)
         BRANCH="${GITHUB_REF_NAME}"
         TAG="${VERSION}-$DATE"
-        # Only the "release" type creates a tag/release, so date collisions never
-        # affect "pre-release" builds. If today's tag already exists (an earlier
-        # release placed it), append -2, -3, ... to keep it unique.
-        if [ "${{ inputs.release_type }}" = "release" ]; then
-          while git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$TAG" | grep -q .; do
-            n=$(( ${n:-1} + 1 ))
-            TAG="${VERSION}-$DATE-$n"
+        # Only a unique TAG avoids "replace" collisions when several builds are
+        # made on the same date: the first build of the day is
+        #   OrangeFox-X625D-<VERSION>-<DATE>
+        # and the following builds are
+        #   OrangeFox-X625D-<VERSION>-<DATE>.N   (.1, .2, ...)
+        # The counter scans BOTH release tags and pre-release workflow artifacts,
+        # so a pre-release run followed by a release run on the same day never
+        # collides, and a second build can never overwrite the first artifact
+        # (upload-artifact@v6 REPLACES an artifact of the same name).
+        # Every GitHub API call goes through gh_retry: on ANY failure rate
+        # limits (primary 403 with X-RateLimit-Remaining: 0, secondary
+        # 403/429 backoffs, 5xx errors) it sleeps 30s and retries - up to
+        # 2 hours total - so the listing can never kill the run in the middle
+        # (limits are waited out, the task always finishes).
+        export GH_TOKEN="${GITHUB_TOKEN}"
+        REPO_S="${GITHUB_REPOSITORY}"
+        gh_retry() {
+          local out i
+          for i in $(seq 1 240) ; do
+            if out=$(gh api "$@" 2>/tmp/gh-api.err); then
+              printf '%s\n' "$out"
+              return 0
+            fi
+            echo "gh api '$*' attempt $i failed, waiting 30s: $(tail -1 /tmp/gh-api.err)"
+            sleep 30
           done
+          echo "gh api '$*' still failing after 2h of retries" >&2
+          return 1
+        }
+
+        all_existing_names() {
+          # artifacts: every pre-release of every history that is still retained
+          gh_retry "repos/$REPO_S/actions/artifacts?per_page=100" --paginate --jq '.artifacts[].name' || true
+          # tags: every release tag ever created
+          gh_retry "repos/$REPO_S/tags?per_page=100" --paginate --jq '.[].name' || true
+        }
+
+        BASE_TAG="${VERSION}-${DATE}"
+        MAXN=0     # highest same-day suffix already present (0 = none)
+        OCC=0      # the exact / legacy same-day name is taken
+        while IFS= read -r name; do
+          [ -z "$name" ] && continue
+          suffix=""
+          if [ "$name" = "$BASE_TAG" ]; then
+            suffix=0
+          elif [ "${name#"$BASE_TAG"-}" != "$name" ]; then
+            suffix="0"   # legacy "-2, -3" format from the old release loop
+          elif [ "${name#"$BASE_TAG".}" != "$name" ]; then
+            suffix="${name#"$BASE_TAG".}"
+          fi
+          if [ -n "$suffix" ]; then
+            num="${suffix%%-*}"    # strip -prerelease-<sha> from artifact names
+            num="${num%%_*}"
+            if [ "$suffix" = "0" ] || echo "$num" | grep -qE '^[0-9]+$'; then
+              echo "same-day exist: $name"
+              OCC=1
+              if echo "$num" | grep -qE '^[0-9]+$' && [ "$num" -gt "$MAXN" ]; then
+                MAXN="$num"
+              fi
+            fi
+          fi
+        done < <(all_existing_names)
+
+        if [ "$OCC" = "1" ] || [ "$MAXN" != "0" ]; then
+          TAG="${BASE_TAG}.$((MAXN + 1))"
+        else
+          TAG="${BASE_TAG}"
         fi
+        echo "TAG chosen: $TAG"
+        # Note: two SIMULTANEOUS runs on the same day could grab the same .N
+        # (the check happens before both write). Sequential builds - the normal
+        # usage here - are always strictly incremental.
         if [ "${{ inputs.release_type }}" = "release" ]; then
           # stable release: plain name OrangeFox-X625D-<TAG>.img (TAG = 11.1-YYYYMMDD)
           FILENAME="OrangeFox-X625D-$TAG"
