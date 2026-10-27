@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
@@ -194,24 +195,37 @@ jobs:
         # so a pre-release run followed by a release run on the same day never
         # collides, and a second build can never overwrite the first artifact
         # (upload-artifact@v6 REPLACES an artifact of the same name).
-        # Every GitHub API call goes through gh_retry: on ANY failure rate
-        # limits (primary 403 with X-RateLimit-Remaining: 0, secondary
-        # 403/429 backoffs, 5xx errors) it sleeps 30s and retries - up to
-        # 2 hours total - so the listing can never kill the run in the middle
-        # (limits are waited out, the task always finishes).
+        # Every GitHub API call goes through gh_retry: transient failures
+        # (rate limits, 5xx, network hiccups) are retried with 30s backoff
+        # (up to 1 hour) so limits only delay the run. Permanent errors
+        # (missing permissions -> 403 "Resource not accessible", 401/404)
+        # fail the step immediately instead of spinning it for hours
+        # (this is live-verified: a listing without "actions: read" in the
+        # workflow "permissions:" block hung this step for 15+ minutes).
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO_S="${GITHUB_REPOSITORY}"
         gh_retry() {
+          # Retries ONLY transient failures: rate limits (403 "rate limit
+          # exceeded", 429) and network/5xx hiccups. A permanent auth failure
+          # (GITHUB_TOKEN missing "actions: read" -> 403 "Resource not
+          # accessible by integration", 401, 404) fails the step IMMEDIATELY
+          # instead of burning the run inside a rename step (live lesson:
+          # missing actions:read made this step spin 15+ minutes).
           local out i
-          for i in $(seq 1 240) ; do
+          for i in $(seq 1 120) ; do
             if out=$(gh api "$@" 2>/tmp/gh-api.err); then
               printf '%s\n' "$out"
               return 0
             fi
-            echo "gh api '$*' attempt $i failed, waiting 30s: $(tail -1 /tmp/gh-api.err)"
+            err="$(cat /tmp/gh-api.err 2>/dev/null || true)"
+            if printf '%s' "$err" | grep -qiE 'resource not accessible|HTTP 40[14]'; then
+              echo "gh api '$*' unrecoverable error (check workflow permissions): $err" >&2
+              return 1
+            fi
+            echo "gh api '$*' attempt $i failed, waiting 30s: $(printf '%s' "$err" | tail -1)"
             sleep 30
           done
-          echo "gh api '$*' still failing after 2h of retries" >&2
+          echo "gh api '$*' still failing after 1h of retries" >&2
           return 1
         }
 
