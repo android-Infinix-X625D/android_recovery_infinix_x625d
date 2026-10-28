@@ -111,6 +111,20 @@ jobs:
         ls -R fox/device/infinix/X625D | head -n 50
         ls -lh fox/device/infinix/X625D/prebuilt/
 
+    - name: Apply device-tree patches to the Fox source
+      run: |
+        # Device-tree patches on top of the synced OrangeFox gui source.
+        # 0001: realtime battery/charge status (status bar battery object polls
+        #       its 1-Hz cached values and requests a redraw on change, so
+        #       plugging/unplugging the cable is visible immediately, without
+        #       having to navigate menus first).
+        cd fox/bootable/recovery
+        for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
+          [ -e "$p" ] || continue
+          echo "Applying patch $p"
+          git apply -v "$p" || { echo "ERROR: $p failed"; git apply -v --reject "$p"; exit 1; }
+        done
+
     - name: Setup ccache (incremental, no run_id)
       uses: hendrikmuhs/ccache-action@v1.2.24
       env:

@@ -1,0 +1,58 @@
+--- a/gui/battery.cpp
++++ b/gui/battery.cpp
+@@ -52,6 +52,8 @@
+ 	#endif
+ 
+ 	mStateMode = false;
++	mLastPercent = -1;
++	mLastCharge = -1;
+ 	mFont = NULL;
+ 	mFontHeight = 0;
+ 	xml_node <> *child;
+@@ -115,6 +117,27 @@
+ 	mFontHeight = mFont->GetHeight();
+ }
+ 
++// [X625D patch] Realtime battery/charge status: poll the 1-Hz cached data
++// manager values here and request a full redraw when the percentage or the
++// charge state changed, instead of only changing state together with the next
++// random UI event (plugging/unplugging the cable was invisible until the user
++// touched some menu).
++int GUIBattery::Update(void)
++{
++	if (!isConditionTrue())
++		return 0;
++
++	int percent = DataManager::GetIntValue("tw_battery");
++	int charging = DataManager::GetIntValue("charging_now");
++	if (percent != mLastPercent || charging != mLastCharge) {
++		mLastPercent = percent;
++		mLastCharge = charging;
++		if (Render() == 0)
++			return 2;
++	}
++	return 0;
++}
++
+ int GUIBattery::Render(void)
+ {
+ 	if (!isConditionTrue())
+--- a/gui/objects.hpp
++++ b/gui/objects.hpp
+@@ -267,6 +267,7 @@
+ 
+ public:
+ 	virtual int Render(void);
++	virtual int Update(void); // [X625D patch] realtime battery/charge updates
+ 
+ protected:
+ 	COLOR mColor;
+@@ -286,6 +287,8 @@
+ 	ImageResource* mImgc15;
+ 	ImageResource* mImg5;
+ 	FontResource* mFont;
++	int mLastPercent;  // [X625D patch] last drawn battery value
++	int mLastCharge;   // [X625D patch] last drawn charging_now value
+ };
+ 
+ // GUIAction - Used for standard actions
