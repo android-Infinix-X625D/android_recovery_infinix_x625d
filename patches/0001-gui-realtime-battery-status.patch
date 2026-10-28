@@ -1,45 +1,91 @@
+diff --git a/gui/battery.cpp b/gui/battery.cpp
+index 149d05b..3f14333 100644
 --- a/gui/battery.cpp
 +++ b/gui/battery.cpp
-@@ -52,6 +52,8 @@
+@@ -44,6 +44,8 @@ extern "C" {
+ #include "rapidxml.hpp"
+ #include "objects.hpp"
+ 
++#include <sys/time.h>
++
+ GUIBattery::GUIBattery(xml_node<>* node)
+ 	: GUIObject(node)
+ {
+@@ -52,6 +54,9 @@ GUIBattery::GUIBattery(xml_node<>* node)
  	#endif
  
  	mStateMode = false;
 +	mLastPercent = -1;
 +	mLastCharge = -1;
++	mLastPollMs = 0;
  	mFont = NULL;
  	mFontHeight = 0;
  	xml_node <> *child;
-@@ -115,6 +117,27 @@
+@@ -115,6 +120,59 @@ GUIBattery::GUIBattery(xml_node<>* node)
  	mFontHeight = mFont->GetHeight();
  }
  
-+// [X625D patch] Realtime battery/charge status: poll the 1-Hz cached data
-+// manager values here and request a full redraw when the percentage or the
-+// charge state changed, instead of only changing state together with the next
-+// random UI event (plugging/unplugging the cable was invisible until the user
-+// touched some menu).
++// [X625D patch] Realtime battery/charge status: read the sysfs nodes directly
++// (throttled to ~250 ms) instead of relying on the 1-Hz data-manager cache, and
++// request a full redraw whenever the percentage or the charge state changed.
++// This makes plugging/unplugging the cable visible immediately, without having
++// to touch the UI first.
 +int GUIBattery::Update(void)
 +{
 +	if (!isConditionTrue())
 +		return 0;
 +
-+	int percent = DataManager::GetIntValue("tw_battery");
-+	int charging = DataManager::GetIntValue("charging_now");
-+	if (percent != mLastPercent || charging != mLastCharge) {
-+		mLastPercent = percent;
-+		mLastCharge = charging;
-+		if (Render() == 0)
-+			return 2;
++	struct timeval curTime;
++	gettimeofday(&curTime, NULL);
++	unsigned long long nowMs = (unsigned long long)curTime.tv_sec * 1000
++				 + curTime.tv_usec / 1000;
++	if (mLastPollMs && nowMs - mLastPollMs < 250)
++		return 0;
++	mLastPollMs = nowMs;
++
++	FILE* fp = fopen("/sys/class/power_supply/battery/capacity", "rt");
++	if (!fp)
++		return 0;
++	char buf[8] = "";
++	int percent = fgets(buf, sizeof(buf), fp) ? atoi(buf) : -1;
++	fclose(fp);
++	if (percent < 0)
++		return 0;
++	if (percent > 100)
++		percent = 100;
++
++	fp = fopen("/sys/class/power_supply/battery/status", "rt");
++	int charging = 0;
++	if (fp) {
++		char s[4] = "";
++		charging = (fgets(s, sizeof(s), fp) && s[0] == 'C') ? 1 : 0;
++		fclose(fp);
 +	}
++
++	if (percent == mLastPercent && charging == mLastCharge)
++		return 0;
++
++	mLastPercent = percent;
++	mLastCharge = charging;
++	DataManager::SetValue("tw_battery", percent, 0);
++	DataManager::SetValue("charging_now", charging ? 1 : 0, 0);
++	char tmp[16];
++	snprintf(tmp, sizeof(tmp), "%i%%%c", percent, charging ? '+' : ' ');
++	DataManager::SetValue("tw_battery_charge", tmp, 0);
++
++	if (Render() == 0)
++		return 2;
 +	return 0;
 +}
 +
  int GUIBattery::Render(void)
  {
  	if (!isConditionTrue())
+diff --git a/gui/objects.hpp b/gui/objects.hpp
+index 0870cee..4c17018 100644
 --- a/gui/objects.hpp
 +++ b/gui/objects.hpp
-@@ -267,6 +267,7 @@
+@@ -267,6 +267,7 @@ public:
  
  public:
  	virtual int Render(void);
@@ -47,12 +93,13 @@
  
  protected:
  	COLOR mColor;
-@@ -286,6 +287,8 @@
+@@ -286,6 +287,9 @@ protected:
  	ImageResource* mImgc15;
  	ImageResource* mImg5;
  	FontResource* mFont;
 +	int mLastPercent;  // [X625D patch] last drawn battery value
 +	int mLastCharge;   // [X625D patch] last drawn charging_now value
++	unsigned long long mLastPollMs; // [X625D patch] last sysfs poll time (ms)
  };
  
  // GUIAction - Used for standard actions
