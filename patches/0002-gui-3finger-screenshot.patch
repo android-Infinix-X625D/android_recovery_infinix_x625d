@@ -1,0 +1,206 @@
+diff --git a/gui/action.cpp b/gui/action.cpp
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -1364,7 +1364,8 @@ int GUIAction::getpartitiondetails(std::string arg)
+   return 0;
+ }
+ 
+-int GUIAction::screenshot(std::string arg __unused)
++// [X625D patch] shared with gui.cpp for the 3-finger swipe screenshot
++void take_screenshot_now()
+ {
+ 	time_t tm;
+ 	char path[256];
+@@ -1372,29 +1373,20 @@ int GUIAction::screenshot(std::string arg __unused)
+ 	uid_t uid = AID_MEDIA_RW;
+ 	gid_t gid = AID_MEDIA_RW;
+ 
+-	//const std::string storage = DataManager::GetCurrentStoragePath();
+-	//if (PartitionManager.Is_Mounted_By_Path(storage)) {
+-	//	snprintf(path, sizeof(path), "%s/Fox/screenshots/", storage.c_str());
+-	//} else
+ 	strcpy(path, "/sdcard/Fox/screenshots/");
+ 
+ 	if (!TWFunc::Create_Dir_Recursive(path, 0775, uid, gid))
+-		return 0;
++		return;
+ 
+ 	tm = time(NULL);
+ 	path_len = strlen(path);
+-
+-	// Screenshot_2014-01-01-18-21-38.png
+ 	strftime(path+path_len, sizeof(path)-path_len, "Screenshot_%Y-%m-%d-%H-%M-%S.png", localtime(&tm));
+ 
+ 	int res = gr_save_screenshot(path);
+ 	if (res == 0) {
+ 		chmod(path, 0666);
+ 		chown(path, uid, gid);
+-
+ 		gui_msg(Msg("screenshot_saved=Screenshot was saved to {1}")(path));
+-
+-		// blink to notify that the screenshot was taken
+ 		gr_color(255, 255, 255, 255);
+ 		gr_fill(0, 0, gr_fb_width(), gr_fb_height());
+ 		gr_flip();
+@@ -1402,6 +1394,13 @@ int GUIAction::screenshot(std::string arg __unused)
+ 	} else {
+ 		gui_err("screenshot_err=Failed to take a screenshot!");
+ 	}
++}
++
++int GUIAction::screenshot(std::string arg __unused)
++{
++	// [X625D patch] body moved to take_screenshot_now() so gui.cpp can
++	// trigger it from the 3-finger swipe gesture handler
++	take_screenshot_now();
+ 	return 0;
+ }
+ 
+diff --git a/gui/gui.cpp b/gui/gui.cpp
+--- a/gui/gui.cpp
++++ b/gui/gui.cpp
+@@ -184,6 +184,13 @@ bool InputHandler::processInput(int timeout_ms)
+ 	input_event ev;
+ 	int ret = ev_get(&ev, timeout_ms);
+ 
++	// [X625D patch] 3-finger swipe: take a screenshot when a multi-touch
++	// gesture that used 3 or more simultaneous contacts just ended
++	if (ev_mt_max_contacts() >= 3 && !ev_mt_gesture_active()) {
++		ev_mt_gesture_clear();
++		take_screenshot_now();
++	}
++
+ 	if (ret < 0)
+ 	{
+ 		// This path means that we did not get any new touch data, but
+diff --git a/gui/objects.hpp b/gui/objects.hpp
+--- a/gui/objects.hpp
++++ b/gui/objects.hpp
+@@ -21,6 +21,9 @@
+ #ifndef _OBJECTS_HEADER
+ #define _OBJECTS_HEADER
+ 
++// [X625D patch] screenshot helper shared between GUIAction and gui.cpp
++void take_screenshot_now();
++
+ #include "rapidxml.hpp"
+ #include <vector>
+ #include <string>
+diff --git a/minuitwrp/events.cpp b/minuitwrp/events.cpp
+--- a/minuitwrp/events.cpp
++++ b/minuitwrp/events.cpp
+@@ -428,6 +428,63 @@ static int vk_tp_to_screen(struct position *p, int *x, int *y)
+     return 1;
+ }
+ 
++// ---------------------------------------------------------------------------
++// [X625D patch] Multi-touch contact tracking for 3-finger gestures.
++// The stock event loop only follows a single pointer stream, so we keep our
++// own per-slot bookkeeping here (Protocol B: ABS_MT_SLOT + ABS_MT_TRACKING_ID)
++// and expose the results so the GUI can detect a multi-finger swipe.
++#define MT_GESTURE_MAX_SLOTS 16
++static int s_mt_slot = 0;                    // current ABS_MT_SLOT
++static int s_mt_slot_down[MT_GESTURE_MAX_SLOTS]; // per-slot contact state
++static int s_mt_contacts = 0;                // active contacts right now
++static int s_mt_max_contacts = 0;            // max simultaneous contacts this gesture
++
++static void mt_gesture_set_slot(int slot)
++{
++    if (slot < 0)                 slot = 0;
++    if (slot >= MT_GESTURE_MAX_SLOTS) slot = MT_GESTURE_MAX_SLOTS - 1;
++    s_mt_slot = slot;
++}
++
++static void mt_gesture_down(int slot)
++{
++    if (slot < 0 || slot >= MT_GESTURE_MAX_SLOTS) return;
++    if (!s_mt_slot_down[slot]) {
++        s_mt_slot_down[slot] = 1;
++        s_mt_contacts++;
++        if (s_mt_contacts > s_mt_max_contacts)
++            s_mt_max_contacts = s_mt_contacts;
++    }
++}
++
++static void mt_gesture_up(int slot)
++{
++    if (slot < 0 || slot >= MT_GESTURE_MAX_SLOTS) return;
++    if (s_mt_slot_down[slot]) {
++        s_mt_slot_down[slot] = 0;
++        if (s_mt_contacts > 0)
++            s_mt_contacts--;
++    }
++}
++
++// highest simultaneous contact count seen in the current/last gesture
++int ev_mt_max_contacts(void)
++{
++    return s_mt_max_contacts;
++}
++
++// true while at least one finger is still on the screen
++int ev_mt_gesture_active(void)
++{
++    return s_mt_contacts > 0;
++}
++
++// reset the bookkeeping after the GUI consumed the gesture
++void ev_mt_gesture_clear(void)
++{
++    s_mt_max_contacts = 0;
++}
++
+ /* Translate a virtual key in to a real key event, if needed */
+ /* Returns non-zero when the event should be consumed */
+ static int vk_modify(struct ev *e, struct input_event *ev)
+@@ -588,12 +645,23 @@ static int vk_modify(struct ev *e, struct input_event *ev)
+                 if (use_tracking_id_negative_as_touch_release)
+                     printf("using ABS_MT_TRACKING_ID value -1 to indicate touch releases\n");
+ #endif
++                mt_gesture_up(s_mt_slot); // [X625D patch]
++            } else {
++                mt_gesture_down(s_mt_slot); // [X625D patch]
+             }
+ #ifdef _EVENT_LOGGING
+             printf("EV: %s => EV_ABS ABS_MT_TRACKING_ID %d\n", e->deviceName, ev->value);
+ #endif
+             break;
+ 
++        case ABS_MT_SLOT: //2f [X625D patch] track slots for multi-finger gestures
++            mt_gesture_set_slot(ev->value);
++#ifdef _EVENT_LOGGING
++            printf("EV: %s => ABS_MT_SLOT %d\n", e->deviceName, ev->value);
++#endif
++            return 1;
++            break;
++
+ #ifdef _EVENT_LOGGING
+         // These are for touch logging purposes only
+         case ABS_MT_ORIENTATION: //34
+@@ -615,11 +683,6 @@ static int vk_modify(struct ev *e, struct input_event *ev)
+             printf("EV: %s => EV_ABS ABS_MT_DISTANCE %d\n", e->deviceName, ev->value);
+ 			return 1;
+             break;
+-        case ABS_MT_SLOT:
+-            printf("EV: %s => ABS_MT_SLOT %d\n", e->deviceName, ev->value);
+-			return 1;
+-			break;
+-#endif
+ 
+         default:
+             // This is an unhandled message, just skip it
+diff --git a/minuitwrp/minui.h b/minuitwrp/minui.h
+--- a/minuitwrp/minui.h
++++ b/minuitwrp/minui.h
+@@ -98,6 +98,11 @@ void ev_exit(void);
+ int ev_get(struct input_event *ev, int timeout_ms);
+ int ev_has_mouse(void);
+ 
++// [X625D patch] multi-touch gesture detection (3-finger screenshot)
++int ev_mt_max_contacts(void);  // max simultaneous contacts in the current/last gesture
++int ev_mt_gesture_active(void); // non-zero while fingers are still down
++void ev_mt_gesture_clear(void); // reset after the gesture was consumed
++
+ // Resources
+ 
+ // Returns 0 if no error, else negative.
