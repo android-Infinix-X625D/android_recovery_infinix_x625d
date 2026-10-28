@@ -177,7 +177,7 @@ diff --git a/minuitwrp/events.cpp b/minuitwrp/events.cpp
  #ifdef _EVENT_LOGGING
          // These are for touch logging purposes only
          case ABS_MT_ORIENTATION: //34
-@@ -615,11 +683,6 @@ static int vk_modify(struct ev *e, struct input_event *ev)
+@@ -615,11 +683,7 @@ static int vk_modify(struct ev *e, struct input_event *ev)
              printf("EV: %s => EV_ABS ABS_MT_DISTANCE %d\n", e->deviceName, ev->value);
  			return 1;
              break;
@@ -186,6 +186,7 @@ diff --git a/minuitwrp/events.cpp b/minuitwrp/events.cpp
 -			return 1;
 -			break;
 -#endif
++#endif      // _EVENT_LOGGING [X625D patch] restored missing block-closer
  
          default:
              // This is an unhandled message, just skip it
