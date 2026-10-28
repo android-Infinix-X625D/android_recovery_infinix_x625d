@@ -340,6 +340,11 @@ jobs:
           ${{ env.BUILDINFO }}
 
     - name: Prepare release notes
+      # Changelog = device-tree commits between the previously created release
+      # tag and this build's commit, fetched via the compare API (tags in this
+      # repo point at the device-tree commits directly).
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       if: inputs.release_type == 'release'
       run: |
         cd device-tree
@@ -348,11 +353,49 @@ jobs:
         SHORT=$(git rev-parse --short HEAD)
         BRANCH="${{ env.BRANCH }}"
         REPO="${GITHUB_REPOSITORY}"
-        cat > $GITHUB_WORKSPACE/release-notes.md <<EOF
-        Unofficial OrangeFox Recovery for Infinix X625D ${{ env.TAG }}
+        TAG="${{ env.TAG }}"
 
-        Device tree: [\`${BRANCH}\`](https://github.com/${REPO}/tree/${BRANCH}) — [\`${SHORT}\`](https://github.com/${REPO}/commit/${SHA}) ${MSG}
+        ghc_retry() { # retry wrapper, same policy as gh_retry
+          local out i
+          for i in $(seq 1 120); do
+            if out=$(gh "$@" 2>/tmp/gh-c.err); then printf '%s\n' "$out"; return 0; fi
+            err="$(cat /tmp/gh-c.err 2>/dev/null || true)"
+            if printf '%s' "$err" | grep -qiE 'resource not accessible|Bad credentials|unauthorized|HTTP 40[14]'; then
+              echo "gh '$*' unrecoverable: $err" >&2; return 1
+            fi
+            sleep 30
+          done
+          echo "gh '$*' still failing after 1h" >&2; return 1
+        }
+
+        # previous tag: newest release created BEFORE this one (skip same tag;
+        # override runs have a stale created_at for the reused tag, which is
+        # harmless: the changelog then spans a wider range)
+        PREVTAG=$(ghc_retry api "repos/$REPO/releases?per_page=100" --paginate \
+          --jq '.[] | "\(.created_at) \(.tag_name)"' | sort -r \
+          | awk '$2 != "'"$TAG"'" {print $2; exit}')
+        CHANGELOG=""
+        if [ -n "$PREVTAG" ]; then
+          CHANGELOG=$(ghc_retry api "repos/$REPO/compare/$PREVTAG...$SHA" \
+            --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " ([" + .sha[0:7] + "](https://github.com/'"$REPO"'/commit/" + .sha + "))"')
+        fi
+
+        cat > $GITHUB_WORKSPACE/release-notes.md <<EOF
+        Unofficial OrangeFox Recovery for Infinix X625D $TAG
+
+        Device tree: [\`$BRANCH\`](https://github.com/$REPO/tree/$BRANCH) — [\`$SHORT\`](https://github.com/$REPO/commit/$SHA) $MSG
+
         EOF
+        if [ -n "$CHANGELOG" ]; then
+          {
+            echo ""
+            echo "### Changelog ($PREVTAG...$SHORT)"
+            echo ""
+            printf '%s\n' "$CHANGELOG"
+          } >> $GITHUB_WORKSPACE/release-notes.md
+        else
+          echo "(initial release - no changelog)" >> $GITHUB_WORKSPACE/release-notes.md
+        fi
         cat $GITHUB_WORKSPACE/release-notes.md
 
     - name: Publish release
