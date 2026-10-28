@@ -281,6 +281,31 @@ jobs:
         else
           TAG="${BASE_TAG}"
         fi
+
+        # A commit that was already built must NOT mint a new tag/artifact:
+        # the existing tag is reused and the Publish step overrides its assets
+        # in place (gh release upload --clobber). Releases carry the full
+        # device-tree commit sha in their notes body, so we match on that.
+        SHA=$(git -C device-tree rev-parse HEAD)
+        if [ "${{ inputs.release_type }}" = "release" ]; then
+          RTAG=$(gh_retry "repos/$REPO_S/releases?per_page=100" --paginate \
+                   --jq ".[] | select(.body | contains(\"$SHA\")) | .tag_name" \
+                   2>/dev/null | head -n1 || true)
+          if [ -n "$RTAG" ]; then
+            echo "commit $SHA already released as $RTAG -> overriding instead of a new tag"
+            TAG="$RTAG"
+          fi
+        else
+          # pre-release: artifacts include "-prerelease-<short>"; same-commit
+          # rerun reuses the exact artifact name (replaced on upload)
+          ANAME=$(gh_retry "repos/$REPO_S/actions/artifacts?per_page=100" \
+                    --paginate --jq '.artifacts[].name' 2>/dev/null \
+                    | grep -- "-prerelease-$SHORT" | head -n1 || true)
+          if [ -n "$ANAME" ]; then
+            TAG=$(printf '%s' "$ANAME" | sed -e "s/^OrangeFox-X625D-//" -e "s/-prerelease-$SHORT\$//")
+            echo "commit $SHORT already built as artifact '$ANAME' -> overriding instead of a new suffix"
+          fi
+        fi
         echo "TAG chosen: $TAG"
         # Note: two SIMULTANEOUS runs on the same day could grab the same .N
         # (the check happens before both write). Sequential builds - the normal
@@ -332,14 +357,37 @@ jobs:
 
     - name: Publish release
       if: inputs.release_type == 'release'
-      uses: softprops/action-gh-release@v3
-      with:
-        tag_name: ${{ env.TAG }}
-        name: ${{ env.TAG }}
-        body_path: release-notes.md
-        prerelease: false
-        files: |
-          ${{ env.FILENAME }}.img
-          ${{ env.BUILDINFO }}
+      run: |
+        export GH_TOKEN="${GITHUB_TOKEN}"
+        REPO="${GITHUB_REPOSITORY}"
+        publish() {
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "release $TAG already exists - overriding its assets in place"
+            gh release upload "$TAG" "$FILENAME.img" "$BUILDINFO" --clobber -R "$REPO"
+          else
+            echo "creating release $TAG"
+            # "tag exists without a release object" -> fall back to upload
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
+               -R "$REPO" "$FILENAME.img" "$BUILDINFO" ||
+              gh release upload "$TAG" "$FILENAME.img" "$BUILDINFO" --clobber -R "$REPO"
+          fi
+        }
+        # Same retry policy as the rename step: transient (rate limit / 5xx /
+        # network) is retried with 30s backoff for up to 1 hour; permanent
+        # auth/permission failures fail immediately.
+        for i in $(seq 1 120); do
+          if out=$(publish 2>&1); then
+            printf '%s\n' "$out"
+            exit 0
+          fi
+          if printf '%s' "$out" | grep -qiE 'resource not accessible|unauthorized|Bad credentials|HTTP 40[14]'; then
+            echo "irrecoverable publish error (check workflow permissions): $out" >&2
+            exit 1
+          fi
+          echo "publish attempt $i failed, waiting 30s: $out"
+          sleep 30
+        done
+        echo "publish still failing after 1h of retries" >&2
+        exit 1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
