@@ -289,7 +289,7 @@ jobs:
         SHA=$(git -C device-tree rev-parse HEAD)
         if [ "${{ inputs.release_type }}" = "release" ]; then
           RTAG=$(gh_retry "repos/$REPO_S/releases?per_page=100" --paginate \
-                   --jq ".[] | select(.body | contains(\"$SHA\")) | .tag_name" \
+                   --jq ".[] | select((.body | contains(\"$SHA\")) and (.body | contains(\"$VERSION\"))) | .tag_name" \
                    2>/dev/null | head -n1 || true)
           if [ -n "$RTAG" ]; then
             echo "commit $SHA already released as $RTAG -> overriding instead of a new tag"
