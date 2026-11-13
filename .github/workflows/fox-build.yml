@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: "Build type (pre-release = artifact only, no tag; release = stable GitHub Release)"
+        description: "Build type (pre-release = draft GitHub Release; release = published GitHub Release)"
         type: choice
         required: true
         default: "pre-release"
@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: write
-  actions: read
 
 jobs:
   build:
@@ -200,7 +199,7 @@ jobs:
         echo "$DT_SHA" >> out/target/product/X625D/build-info.txt
         cat out/target/product/X625D/build-info.txt
 
-    - name: Name artifacts and compute the tag (version pulled from OrangeFox)
+    - name: Name the image and compute the tag (version pulled from OrangeFox)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -234,33 +233,37 @@ jobs:
         VERSION="${FOX_BASE}"
         DATE=$(date +'%Y%m%d')
         SHORT=$(git -C device-tree rev-parse --short HEAD)
+        SHA=$(git -C device-tree rev-parse HEAD)
         BRANCH="${GITHUB_REF_NAME}"
-        TAG="${VERSION}-$DATE"
-        # Only a unique TAG avoids "replace" collisions when several builds are
-        # made on the same date: the first build of the day is
-        #   OrangeFox-X625D-<VERSION>-<DATE>
-        # and the following builds are
-        #   OrangeFox-X625D-<VERSION>-<DATE>.N   (.1, .2, ...)
-        # The counter scans BOTH release tags and pre-release workflow artifacts,
-        # so a pre-release run followed by a release run on the same day never
-        # collides, and a second build can never overwrite the first artifact
-        # (upload-artifact@v6 REPLACES an artifact of the same name).
+        # Stable releases get a unique tag so several builds on the same date
+        # never collide: the first build of the day is
+        #   <VERSION>-<DATE>
+        # and the following ones are
+        #   <VERSION>-<DATE>.N   (.1, .2, ...)
+        # The counter scans BOTH release tag names and release tags (drafts are
+        # included).
+        #
+        # Pre-releases do NOT get a dated tag: every pre-release build goes to
+        # one rolling tag
+        #   <VERSION>-pre
+        # whose draft release is replaced each time. The build itself is
+        # identified by its asset name:
+        #   OrangeFox-X625D-<VERSION>-<DATE>-N.<short>.img
+        # where N counts that day's pre-release assets (1, 2, ...) and old
+        # assets are kept.
+        #
         # Every GitHub API call goes through gh_retry: transient failures
         # (rate limits, 5xx, network hiccups) are retried with 30s backoff
         # (up to 1 hour) so limits only delay the run. Permanent errors
         # (missing permissions -> 403 "Resource not accessible", 401/404)
-        # fail the step immediately instead of spinning it for hours
-        # (this is live-verified: a listing without "actions: read" in the
-        # workflow "permissions:" block hung this step for 15+ minutes).
+        # fail the step immediately instead of spinning it for hours.
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO_S="${GITHUB_REPOSITORY}"
         gh_retry() {
           # Retries ONLY transient failures: rate limits (403 "rate limit
           # exceeded", 429) and network/5xx hiccups. A permanent auth failure
-          # (GITHUB_TOKEN missing "actions: read" -> 403 "Resource not
-          # accessible by integration", 401, 404) fails the step IMMEDIATELY
-          # instead of burning the run inside a rename step (live lesson:
-          # missing actions:read made this step spin 15+ minutes).
+          # (403 "Resource not accessible", 401, 404) fails the step IMMEDIATELY
+          # instead of burning the run inside a rename step.
           local out i
           for i in $(seq 1 120) ; do
             if out=$(gh api "$@" 2>/tmp/gh-api.err); then
@@ -280,84 +283,92 @@ jobs:
         }
 
         all_existing_names() {
-          # artifacts: every pre-release of every history that is still retained
-          gh_retry "repos/$REPO_S/actions/artifacts?per_page=100" --paginate --jq '.artifacts[].name' || true
+          # releases: every published release, plus every draft pre-release
+          # (drafts are listed for tokens with write access)
+          gh_retry "repos/$REPO_S/releases?per_page=100" --paginate --jq '.[].tag_name' || true
           # tags: every release tag ever created
           gh_retry "repos/$REPO_S/tags?per_page=100" --paginate --jq '.[].name' || true
         }
 
-        BASE_TAG="${VERSION}-${DATE}"
-        MAXN=0     # highest same-day suffix already present (0 = none)
-        OCC=0      # the exact / legacy same-day name is taken
-        while IFS= read -r name; do
-          [ -z "$name" ] && continue
-          suffix=""
-          if [ "$name" = "$BASE_TAG" ]; then
-            suffix=0
-          elif [ "${name#"$BASE_TAG"-}" != "$name" ]; then
-            suffix="0"   # legacy "-2, -3" format from the old release loop
-          elif [ "${name#"$BASE_TAG".}" != "$name" ]; then
-            suffix="${name#"$BASE_TAG".}"
-          fi
-          if [ -n "$suffix" ]; then
-            num="${suffix%%-*}"    # strip -prerelease-<sha> from artifact names
-            num="${num%%_*}"
-            if [ "$suffix" = "0" ] || echo "$num" | grep -qE '^[0-9]+$'; then
-              echo "same-day exist: $name"
-              OCC=1
-              if echo "$num" | grep -qE '^[0-9]+$' && [ "$num" -gt "$MAXN" ]; then
-                MAXN="$num"
+        if [ "${{ inputs.release_type }}" = "release" ]; then
+          BASE_TAG="${VERSION}-${DATE}"
+          MAXN=0     # highest same-day suffix already present (0 = none)
+          OCC=0      # the exact / legacy same-day name is taken
+          while IFS= read -r name; do
+            [ -z "$name" ] && continue
+            suffix=""
+            if [ "$name" = "$BASE_TAG" ]; then
+              suffix=0
+            elif [ "${name#"$BASE_TAG"-}" != "$name" ]; then
+              suffix="0"   # legacy "-2, -3" format from the old release loop
+            elif [ "${name#"$BASE_TAG".}" != "$name" ]; then
+              suffix="${name#"$BASE_TAG".}"
+            fi
+            if [ -n "$suffix" ]; then
+              num="${suffix%%-*}"
+              num="${num%%_*}"
+              if [ "$suffix" = "0" ] || echo "$num" | grep -qE '^[0-9]+$'; then
+                echo "same-day exist: $name"
+                OCC=1
+                if echo "$num" | grep -qE '^[0-9]+$' && [ "$num" -gt "$MAXN" ]; then
+                  MAXN="$num"
+                fi
               fi
             fi
+          done < <(all_existing_names)
+
+          if [ "$OCC" = "1" ] || [ "$MAXN" != "0" ]; then
+            TAG="${BASE_TAG}.$((MAXN + 1))"
+          else
+            TAG="${BASE_TAG}"
           fi
-        done < <(all_existing_names)
 
-        if [ "$OCC" = "1" ] || [ "$MAXN" != "0" ]; then
-          TAG="${BASE_TAG}.$((MAXN + 1))"
-        else
-          TAG="${BASE_TAG}"
-        fi
-
-        # A commit that was already built must NOT mint a new tag/artifact:
-        # the existing tag is reused and the Publish step overrides its assets
-        # in place (gh release upload --clobber). Releases carry the full
-        # device-tree commit sha in their notes body, so we match on that.
-        SHA=$(git -C device-tree rev-parse HEAD)
-        if [ "${{ inputs.release_type }}" = "release" ]; then
+          # A commit that was already released must NOT mint a new tag: the
+          # existing release is reused and the Publish step overrides its
+          # assets in place (gh release upload --clobber). Releases carry the
+          # full device-tree commit sha in their notes body, so we match on
+          # that. Drafts and rolling pre-release tags are ignored, so a draft
+          # pre-release can never be promoted into a stable tag.
           RTAG=$(gh_retry "repos/$REPO_S/releases?per_page=100" --paginate \
-                   --jq ".[] | select((.body | contains(\"$SHA\")) and (.body | contains(\"$VERSION\"))) | .tag_name" \
+                   --jq ".[] | select(.draft == false) | select(.tag_name | endswith(\"-pre\") | not) | select((.body | contains(\"$SHA\")) and (.body | contains(\"$VERSION\"))) | .tag_name" \
                    2>/dev/null | head -n1 || true)
           if [ -n "$RTAG" ]; then
             echo "commit $SHA already released as $RTAG -> overriding instead of a new tag"
             TAG="$RTAG"
           fi
+          IDENT="$TAG"
         else
-          # pre-release: artifacts include "-prerelease-<short>"; same-commit
-          # rerun reuses the exact artifact name (replaced on upload)
-          ANAME=$(gh_retry "repos/$REPO_S/actions/artifacts?per_page=100" \
-                    --paginate --jq '.artifacts[].name' 2>/dev/null \
-                    | grep -- "-prerelease-$SHORT" | head -n1 || true)
-          if [ -n "$ANAME" ]; then
-            TAG=$(printf '%s' "$ANAME" | sed -e "s/^OrangeFox-X625D-//" -e "s/-prerelease-$SHORT\$//")
-            echo "commit $SHORT already built as artifact '$ANAME' -> overriding instead of a new suffix"
-          fi
+          # One rolling draft release for every pre-release build.
+          TAG="${VERSION}-pre"
+          # Daily counter, read from the assets already attached to it. They
+          # are kept, so the newest build always has the highest N.
+          N=0
+          while IFS= read -r name; do
+            [ -z "$name" ] && continue
+            case "$name" in
+              "OrangeFox-X625D-$VERSION-$DATE-"*)
+                n="${name#OrangeFox-X625D-$VERSION-$DATE-}"
+                n="${n%%.*}"
+                if [ -n "$n" ] && [ -z "${n//[0-9]/}" ] && [ "$n" -gt "$N" ]; then
+                  N="$n"
+                fi
+                ;;
+            esac
+          done < <(gh api "repos/$REPO_S/releases/tags/$TAG" --jq '.assets[].name' 2>/dev/null || true)
+          IDENT="${VERSION}-${DATE}-$((N + 1)).${SHORT}"
+          echo "pre-release build $IDENT on rolling release $TAG"
         fi
         echo "TAG chosen: $TAG"
         # Note: two SIMULTANEOUS runs on the same day could grab the same .N
         # (the check happens before both write). Sequential builds - the normal
         # usage here - are always strictly incremental.
-        if [ "${{ inputs.release_type }}" = "release" ]; then
-          # stable release: plain name OrangeFox-X625D-<TAG>.img (TAG = 11.1-YYYYMMDD)
-          FILENAME="OrangeFox-X625D-$TAG"
-        else
-          # pre-release: artifact only (no tag/release) - add commit ID to the name
-          FILENAME="OrangeFox-X625D-$TAG-prerelease-$SHORT"
-        fi
-        BUILDINFO="build-info-$TAG.txt"
+        # Both kinds publish a GitHub Release; a pre-release is a draft. The
+        # asset name carries the build identity.
+        FILENAME="OrangeFox-X625D-$IDENT"
+        BUILDINFO="build-info-$IDENT.txt"
         echo "TAG=$TAG" >> $GITHUB_ENV
         echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-        echo "RELEASE_TYPE=${{ inputs.release_type }}" >> $GITHUB_ENV
-        echo "DT_SHORT=$SHORT" >> $GITHUB_ENV
+        echo "DT_SHA=$SHA" >> $GITHUB_ENV
         echo "FILENAME=$FILENAME" >> $GITHUB_ENV
         echo "BUILDINFO=$BUILDINFO" >> $GITHUB_ENV
         cp fox/out/target/product/X625D/recovery.img "$FILENAME.img"
@@ -365,23 +376,12 @@ jobs:
         ls -lh "$FILENAME.img" "$BUILDINFO"
         cat "$BUILDINFO"
 
-    - name: Upload the renamed image + build info as workflow artifact
-      # pre-release consumes this directly; for release the same files are also
-      # attached to the GitHub Release by the Publish step.
-      uses: actions/upload-artifact@v6
-      with:
-        name: ${{ env.FILENAME }}
-        path: |
-          ${{ env.FILENAME }}.img
-          ${{ env.BUILDINFO }}
-
     - name: Prepare release notes
       # Changelog = device-tree commits between the previously created release
       # tag and this build's commit, fetched via the compare API (tags in this
       # repo point at the device-tree commits directly).
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      if: inputs.release_type == 'release'
       run: |
         cd device-tree
         MSG=$(git log -1 --pretty=%s)
@@ -404,11 +404,13 @@ jobs:
           echo "gh '$*' still failing after 1h" >&2; return 1
         }
 
-        # previous tag: newest release created BEFORE this one (skip same tag;
-        # override runs have a stale created_at for the reused tag, which is
-        # harmless: the changelog then spans a wider range)
+        # previous tag: newest PUBLISHED release created BEFORE this one; draft
+        # pre-releases are skipped so a chain of drafts still diffs against the
+        # last real release. (Skip same tag; override runs have a stale
+        # created_at for the reused tag, which is harmless: the changelog then
+        # spans a wider range)
         PREVTAG=$(ghc_retry api "repos/$REPO/releases?per_page=100" --paginate \
-          --jq '.[] | "\(.created_at) \(.tag_name)"' | sort -r \
+          --jq '.[] | select(.draft | not) | "\(.created_at) \(.tag_name)"' | sort -r \
           | awk '$2 != "'"$TAG"'" {print $2; exit}')
         CHANGELOG=""
         if [ -n "$PREVTAG" ]; then
@@ -418,6 +420,8 @@ jobs:
 
         cat > $GITHUB_WORKSPACE/release-notes.md <<EOF
         Unofficial OrangeFox Recovery for Infinix X625D $TAG
+
+        Build: \`$FILENAME.img\`
 
         Device tree: [\`$BRANCH\`](https://github.com/$REPO/tree/$BRANCH) — [\`$SHORT\`](https://github.com/$REPO/commit/$SHA) $MSG
 
@@ -435,19 +439,30 @@ jobs:
         cat $GITHUB_WORKSPACE/release-notes.md
 
     - name: Publish release
-      if: inputs.release_type == 'release'
+      # Both kinds publish a GitHub Release. A pre-release goes to one rolling
+      # draft release (<VERSION>-pre) that is refreshed on every build; a stable
+      # release is published immediately.
       run: |
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO="${GITHUB_REPOSITORY}"
+        CREATE_ARGS=()
+        if [ "${{ inputs.release_type }}" != "release" ]; then
+          CREATE_ARGS+=(--draft --prerelease)
+          echo "pre-release -> rolling draft release $TAG"
+        fi
         publish() {
           if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-            echo "release $TAG already exists - overriding its assets in place"
+            echo "release $TAG already exists - refreshing its notes and assets"
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md -R "$REPO"
             gh release upload "$TAG" "$FILENAME.img" "$BUILDINFO" --clobber -R "$REPO"
           else
             echo "creating release $TAG"
+            # --target pins the tag to the commit this image was built from,
+            # which matters for a draft: its tag is only created when the draft
+            # is published, possibly days later.
             # "tag exists without a release object" -> fall back to upload
             gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
-               -R "$REPO" "$FILENAME.img" "$BUILDINFO" ||
+               --target "$DT_SHA" "${CREATE_ARGS[@]}" -R "$REPO" "$FILENAME.img" "$BUILDINFO" ||
               gh release upload "$TAG" "$FILENAME.img" "$BUILDINFO" --clobber -R "$REPO"
           fi
         }
