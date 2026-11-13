@@ -1,0 +1,37 @@
+diff --git a/openrecoveryscript.cpp b/openrecoveryscript.cpp
+index 3e4ef93..d33f3ab 100755
+--- a/openrecoveryscript.cpp
++++ b/openrecoveryscript.cpp
+@@ -113,6 +113,7 @@ int OpenRecoveryScript::run_script_file(void) {
+ 	if (fp != NULL) {
+ 		DataManager::SetValue(TW_SIMULATE_ACTIONS, 0);
+ 		DataManager::SetValue("ui_progress", 0); // Reset the progress bar
++		DataManager::SetValue("tw_ors_wipe", 0);
+ 		while (fgets(script_line, SCRIPT_COMMAND_SIZE, fp) != NULL && ret_val == 0) {
+ 			cindex = 0;
+ 			line_len = strlen(script_line);
+@@ -156,6 +157,7 @@ int OpenRecoveryScript::run_script_file(void) {
+ 				install_cmd = -1;
+ 			} else if (strcmp(command, "wipe") == 0) {
+ 				// Wipe
++				DataManager::SetValue("tw_ors_wipe", 1);
+ 				if (strcmp(value, "cache") == 0 || strcmp(value, "/cache") == 0) {
+ 					PartitionManager.Wipe_By_Path("/cache");
+ 				} else if (strcmp(value, "system") == 0 || strcmp(value, "/system") == 0 || strcmp(value, PartitionManager.Get_Android_Root_Path().c_str()) == 0) {
+@@ -170,6 +172,7 @@ int OpenRecoveryScript::run_script_file(void) {
+ 				}
+ 			} else if (strcmp(command, "format") == 0) {
+ 				// Format
++				DataManager::SetValue("tw_ors_wipe", 1);
+ 				if (strcmp(value, "data") == 0 || strcmp(value, "/data") == 0 || strcmp(value, "factory") == 0 || strcmp(value, "factoryreset") == 0) {
+ 					PartitionManager.Format_Data();
+ 				} else {
+@@ -659,6 +662,8 @@ int OpenRecoveryScript::Backup_Command(string Options) {
+ void OpenRecoveryScript::Run_OpenRecoveryScript(void) {
+ 	DataManager::SetValue("tw_back", "main");
+ 	DataManager::SetValue("tw_action", "openrecoveryscript");
++	// Progress screen: not an erase until a wipe/format command runs.
++	DataManager::SetValue("tw_ors_wipe", 0);
+ 	DataManager::SetValue("tw_action_param", "");
+ 	DataManager::SetValue("tw_has_action2", "0");
+ 	DataManager::SetValue("tw_action2", "");
