@@ -446,15 +446,21 @@ jobs:
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO="${GITHUB_REPOSITORY}"
         CREATE_ARGS=()
-        if [ "${{ inputs.release_type }}" != "release" ]; then
+        # A pre-release ships the image only: the rolling draft is about the
+        # build, and its notes already carry the build info. Stable releases
+        # keep attaching build-info-*.txt.
+        ASSETS=("$FILENAME.img")
+        if [ "${{ inputs.release_type }}" = "release" ]; then
+          ASSETS+=("$BUILDINFO")
+        else
           CREATE_ARGS+=(--draft --prerelease)
-          echo "pre-release -> rolling draft release $TAG"
+          echo "pre-release -> rolling draft release $TAG (image only)"
         fi
         publish() {
           if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
             echo "release $TAG already exists - refreshing its notes and assets"
             gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md -R "$REPO"
-            gh release upload "$TAG" "$FILENAME.img" "$BUILDINFO" --clobber -R "$REPO"
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber -R "$REPO"
           else
             echo "creating release $TAG"
             # --target pins the tag to the commit this image was built from,
@@ -462,8 +468,8 @@ jobs:
             # is published, possibly days later.
             # "tag exists without a release object" -> fall back to upload
             gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
-               --target "$DT_SHA" "${CREATE_ARGS[@]}" -R "$REPO" "$FILENAME.img" "$BUILDINFO" ||
-              gh release upload "$TAG" "$FILENAME.img" "$BUILDINFO" --clobber -R "$REPO"
+               --target "$DT_SHA" "${CREATE_ARGS[@]}" -R "$REPO" "${ASSETS[@]}" ||
+              gh release upload "$TAG" "${ASSETS[@]}" --clobber -R "$REPO"
           fi
         }
         # Same retry policy as the rename step: transient (rate limit / 5xx /
