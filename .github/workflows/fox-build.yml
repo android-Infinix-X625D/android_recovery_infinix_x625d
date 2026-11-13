@@ -111,6 +111,27 @@ jobs:
         ls -R fox/device/infinix/X625D | head -n 50
         ls -lh fox/device/infinix/X625D/prebuilt/
 
+    - name: Ensure OrangeFox theme at the pinned submodule commit
+      env:
+        THEME_SHA: 51b06e501e32fa69df28a507b0a64382be6d2db4
+      run: |
+        # gui/theme is a git submodule of bootable/recovery. The sync does not
+        # always initialise it, and patches/0005-0006 were generated against one
+        # exact theme revision, so make sure that revision is what gets patched.
+        THEME=fox/bootable/recovery/gui/theme
+        if [ -e "$THEME/.git" ] && [ "$(git -C "$THEME" rev-parse HEAD 2>/dev/null)" = "$THEME_SHA" ]; then
+          echo "theme already at $THEME_SHA"
+        else
+          # .gitmodules uses an SSH URL that CI cannot use -> fetch over HTTPS.
+          echo "checking out theme at $THEME_SHA"
+          rm -rf "$THEME"
+          git init -q "$THEME"
+          git -C "$THEME" remote add origin https://gitlab.com/OrangeFox/misc/theme.git
+          git -C "$THEME" fetch -q --depth=1 origin "$THEME_SHA"
+          git -C "$THEME" checkout -q FETCH_HEAD
+        fi
+        test "$(git -C "$THEME" rev-parse HEAD)" = "$THEME_SHA"
+
     - name: Apply device-tree patches to the Fox source
       run: |
         # Device-tree patches on top of the synced OrangeFox source.
@@ -121,6 +142,12 @@ jobs:
         # 0003: factory reset formats /data completely, incl. /data/media
         #       (Settings -> Factory data reset must behave like stock recovery;
         #       upstream keeps /data/media unless TW_OEM_BUILD is defined).
+        # 0004: the ORS engine sets tw_ors_wipe when the running script wipes or
+        #       formats something, so the theme can tell a wipe from an OTA.
+        # 0005/0006: the compact ORS progress screen ("ota_simple" overlay) then
+        #       shows "Erasing..." + an erase icon for wipes, while a real OTA
+        #       keeps "Updating..." + the download icon. 0006 is a binary patch
+        #       (the two new FullscreenIcons/erase_icon.png).
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue
@@ -129,26 +156,10 @@ jobs:
         done
         echo "--- Factory_Reset() after patches ---"
         sed -n '/TWPartitionManager::Factory_Reset(/,/^}/p' partitionmanager.cpp
-
-    - name: Wipe screen shows "Erasing..." with an erase icon
-      run: |
-        # ORS runs (factory reset, OTA) swap the console for the compact
-        # "ota_simple" overlay: ota_icon.png + the ota_simple_title string
-        # ("Updating..."). Rewrite the label and the icon in the theme checkout
-        # so the screen matches what is actually happening.
-        THEME=fox/bootable/recovery/gui/theme
-        if [ ! -d "$THEME/portrait_hdpi" ]; then
-          # gui/theme is a git submodule (gitlab.com/OrangeFox/misc/theme); the
-          # sync script does not always initialise it. Clone it over HTTPS
-          # (the .gitmodules URL is SSH-only) so the overrides below apply.
-          echo "theme checkout missing at $THEME, cloning it"
-          rm -rf "$THEME"
-          git clone --depth=1 https://gitlab.com/OrangeFox/misc/theme.git "$THEME"
-        fi
-        python3 device-tree/scripts/wipe-screen-erase.py "$THEME"
-        echo "--- resulting strings ---"
-        grep -h ota_simple_title "$THEME"/common/languages/en.xml \
-          "$THEME"/common/languages/id.xml || true
+        echo "--- ORS wipe state after patches ---"
+        grep -n "tw_ors_wipe" openrecoveryscript.cpp
+        echo "--- ota_simple page after patches ---"
+        sed -n '/<page name="ota_simple">/,/<\/page>/p' gui/theme/portrait_hdpi/pages/universal.xml | head -40
 
     - name: Setup ccache (incremental, no run_id)
       uses: hendrikmuhs/ccache-action@v1.2.24
