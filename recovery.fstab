@@ -7,13 +7,27 @@
 
 /boot        emmc   /dev/block/platform/bootdevice/by-name/boot
 /recovery    emmc   /dev/block/platform/bootdevice/by-name/recovery
+# "Factory data reset" from Android Settings writes a BCB command
+# ("boot-recovery" + "--wipe_data") at the start of the misc partition and
+# reboots. On X625D there is no partition literally named "misc": the stock
+# recovery.fstab maps /misc to "para" (512 KB). TWRP/OrangeFox only reads and
+# clears that BCB if /misc is present here with the emmc type (set_misc_device()
+# in twrp.cpp), so without this line:
+#   - the --wipe_data request is ignored (no wipe), and
+#   - the stale "boot-recovery" command is never cleared, so every
+#     "Reboot system" lands back in recovery until stock recovery clears it.
+/misc        emmc   /dev/block/platform/bootdevice/by-name/para
 # System-as-root: system is mounted ONLY at /system_root. Do NOT add a
 # /system pointing at the same partition: it creates a duplicate "System" entry in the Wipe menu,
 # mounting /system fails (Invalid argument) and OrangeFox cannot find
 # build.prop (no_os_warning). /system is accessed via a symlink to /system_root/system.
-/system_root ext4   /dev/block/platform/bootdevice/by-name/system   flags=display="System";backup=1;wipeduringfactoryreset
+# NOTE: no "wipeduringfactoryreset" here (nor on /vendor): that flag makes
+# TWRP's factory reset (ORS "wipe data", i.e. the Settings factory reset)
+# erase /system and /vendor too, leaving the phone without an OS. A factory
+# reset must only erase /data (+ /cache), exactly like stock recovery.
+/system_root ext4   /dev/block/platform/bootdevice/by-name/system   flags=display="System";backup=1
 /system_image emmc   /dev/block/platform/bootdevice/by-name/system   flags=display="System Image";backup=1;flashimg=1
-/vendor      ext4   /dev/block/platform/bootdevice/by-name/vendor   flags=display="Vendor";backup=1;wipeduringfactoryreset
+/vendor      ext4   /dev/block/platform/bootdevice/by-name/vendor   flags=display="Vendor";backup=1
 /vendor_image emmc   /dev/block/platform/bootdevice/by-name/vendor   flags=display="Vendor Image";backup=1;flashimg=1
 /data        ext4   /dev/block/platform/bootdevice/by-name/userdata   flags=fileencryption=aes-256-cts;encryptable=/dev/block/platform/bootdevice/by-name/metadata;storage;wipeingui
 /cache       ext4   /dev/block/platform/bootdevice/by-name/cache   flags=display="Cache";backup=1;wipeduringfactoryreset;wipeingui

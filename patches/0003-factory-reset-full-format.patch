@@ -1,0 +1,24 @@
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -1761,7 +1761,6 @@ int TWPartitionManager::Factory_Reset(void)
+     {
+       if ((*iter)->Wipe_During_Factory_Reset && (*iter)->Is_Present)
+ 	{
+-#ifdef TW_OEM_BUILD
+ 	  if ((*iter)->Mount_Point == "/data")
+ 	    {
+ 	      if (!(*iter)->Wipe_Encryption())
+@@ -1769,12 +1768,9 @@ int TWPartitionManager::Factory_Reset(void)
+ 	    }
+ 	  else
+ 	    {
+-#endif
+ 	      if (!(*iter)->Wipe())
+ 		ret = false;
+-#ifdef TW_OEM_BUILD
+ 	    }
+-#endif
+ 	}
+       else if ((*iter)->Has_Android_Secure)
+ 	{
