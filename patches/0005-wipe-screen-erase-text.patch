@@ -1,0 +1,82 @@
+diff --git a/gui/theme/common/languages/en.xml b/gui/theme/common/languages/en.xml
+index 9d1c0e9..e477d1d 100644
+--- a/gui/theme/common/languages/en.xml
++++ b/gui/theme/common/languages/en.xml
+@@ -915,6 +915,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Installing OTA...</string>
+ 		<string name="ota_simple_title">Updating...</string>
++		<string name="ota_wipe_title">Erasing...</string>
+ 		<string name="ota_simple_log_btn">Log</string>
+ 
+ 		<string name="battery">Battery</string>
+diff --git a/gui/theme/common/languages/id.xml b/gui/theme/common/languages/id.xml
+index a4630ad..220e98d 100644
+--- a/gui/theme/common/languages/id.xml
++++ b/gui/theme/common/languages/id.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Memasang OTA...</string>
+ 		<string name="ota_simple_title">Memperbarui...</string>
++		<string name="ota_wipe_title">Menghapus...</string>
+ 		<string name="ota_simple_log_btn">Log</string>
+ 
+ 		<string name="battery">Baterai</string>
+diff --git a/gui/theme/portrait_hdpi/pages/universal.xml b/gui/theme/portrait_hdpi/pages/universal.xml
+index 012f824..c1c01c5 100644
+--- a/gui/theme/portrait_hdpi/pages/universal.xml
++++ b/gui/theme/portrait_hdpi/pages/universal.xml
+@@ -325,15 +325,29 @@
+ 			<template name="statusbarinfo"/>
+ 
+ 			<image>
++				<condition var1="tw_ors_wipe" op="!=" var2="1"/>
+ 				<image resource="ota_icon"/>
+ 				<placement x="%center_x%" y="%center_y%" placement="4"/>
+ 			</image>
+ 
++			<image>
++				<condition var1="tw_ors_wipe" var2="1"/>
++				<image resource="erase_icon"/>
++				<placement x="%center_x%" y="%center_y%" placement="4"/>
++			</image>
++
+ 			<text style="text_ab_title_ota">
++				<condition var1="tw_ors_wipe" op="!=" var2="1"/>
+ 				<placement x="%center_x%" y="%ota_update_title_y%" placement="4"/>
+ 				<text>{@ota_simple_title}</text>
+ 			</text>
+ 
++			<text style="text_ab_title_ota">
++				<condition var1="tw_ors_wipe" var2="1"/>
++				<placement x="%center_x%" y="%ota_update_title_y%" placement="4"/>
++				<text>{@ota_wipe_title}</text>
++			</text>
++
+ 			<progressbar>
+ 				<placement x="%ota_update_progress_x%" y="%ota_update_progress_y%"/>
+ 				<resource empty="progress_empty_small" full="progress_fill_small"/>
+diff --git a/gui/theme/portrait_hdpi/resources/images.xml b/gui/theme/portrait_hdpi/resources/images.xml
+index 730cb17..f4ec66c 100644
+--- a/gui/theme/portrait_hdpi/resources/images.xml
++++ b/gui/theme/portrait_hdpi/resources/images.xml
+@@ -192,6 +192,7 @@
+ 		<image name="actionbar_show" filename="Default/Other/show" retainaspect="1"/>
+ 		<image name="actionbar_clear" filename="Default/Other/actionbar_clear" retainaspect="1"/>
+ 		<image name="empty_folder" filename="Default/FullscreenIcons/empty_folder" retainaspect="1"/>
++		<image name="erase_icon" filename="Default/FullscreenIcons/erase_icon" retainaspect="1"/>
+ 		<image name="fox_lock" filename="Default/FullscreenIcons/fox_lock" retainaspect="1"/>
+ 		<image name="empty_box" filename="Default/FullscreenIcons/box" retainaspect="1"/>
+ 		<image name="actionbar_w_back" filename="Default/ActionBar/back" retainaspect="1"/>
+diff --git a/gui/theme/portrait_hdpi/themes/styles/Light.xml b/gui/theme/portrait_hdpi/themes/styles/Light.xml
+index 7af90c6..f24b9c2 100644
+--- a/gui/theme/portrait_hdpi/themes/styles/Light.xml
++++ b/gui/theme/portrait_hdpi/themes/styles/Light.xml
+@@ -44,6 +44,7 @@
+ 		
+ 		<!-- ota -->
+ 		<image name="ota_icon" filename="Light/FullscreenIcons/ota_icon" retainaspect="1"/>
++		<image name="erase_icon" filename="Light/FullscreenIcons/erase_icon" retainaspect="1"/>
+ 		<image name="progress_fill_small" filename="Light/Progress/progress_fill_small"/>
+ 
+ 		<!-- Accents -->
