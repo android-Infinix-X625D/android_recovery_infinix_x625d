@@ -28,6 +28,7 @@ jobs:
       run: |
         sudo apt-get clean
         df -h
+
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
         df -h
 
@@ -45,17 +46,15 @@ jobs:
 
     - name: Install deps (fast, no full apt update)
       run: |
-        # The packages above were restored from cache by the previous step.
-        # This step only handles what jammy lacks + a fast setup.
-        # Ubuntu 22.04 no longer provides libncurses5 -> pull from focal (needed by the Android 9 header-abi-dumper)
+        # Only what jammy lacks: it dropped libncurses5 (header-abi-dumper) and python2, so those come from focal.
         if [ ! -f /lib/x86_64-linux-gnu/libncurses.so.5 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libncurses.so.5 ]; then
           wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.2-0ubuntu2_amd64.deb -O /tmp/libtinfo5.deb
           wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.2-0ubuntu2_amd64.deb -O /tmp/libncurses5.deb
           sudo dpkg -i /tmp/libtinfo5.deb /tmp/libncurses5.deb || sudo apt-get -f install -y
         fi
         ls -lh /lib/x86_64-linux-gnu/libncurses* /usr/lib/x86_64-linux-gnu/libncurses* || true
-        # Android 9 wajib default python = python2 (check_radio_versions.py masih print tanpa kurung)
-        # Ubuntu 22.04 no longer provides python2 -> pull from the focal repo (jammy dropped python2)
+
+        # Android 9 wants python2 as the default (check_radio_versions.py).
         if [ ! -x /usr/bin/python2 ] && [ ! -x /usr/bin/python2.7 ]; then
           echo "deb http://archive.ubuntu.com/ubuntu/ focal universe" | sudo tee /etc/apt/sources.list.d/focal-universe.list
           sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/focal-universe.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
@@ -65,12 +64,14 @@ jobs:
         sudo ln -sf /usr/bin/python2 /usr/bin/python || sudo ln -sf /usr/bin/python2.7 /usr/bin/python
         python --version
         python3 --version
+
         mkdir -p ~/bin
         if [ ! -x ~/bin/repo ]; then
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
         fi
         echo "$HOME/bin" >> $GITHUB_PATH
+
         git config --global user.name "gh-action"
         git config --global user.email "gh-action@local"
         git config --global color.ui false
@@ -80,20 +81,22 @@ jobs:
         git clone --depth=1 https://gitlab.com/OrangeFox/sync.git OrangeFox_sync
         ls -la OrangeFox_sync/ OrangeFox_sync/legacy/patches/
         chmod +x OrangeFox_sync/legacy/orangefox_sync_legacy.sh
-        # workaround: the legacy script looks for patches in patches/, while the 9.0 patch lives in legacy/patches/
+
+        # The legacy script reads patches/, but the 9.0 patch lives in legacy/patches/.
         mkdir -p OrangeFox_sync/patches
         cp OrangeFox_sync/legacy/patches/patch-manifest-fox_9.0.diff OrangeFox_sync/patches/ || true
         cd OrangeFox_sync
-        # a cached fox/ dir from a previous run can be corrupt (error: bootable/recovery/.git unsupported checkout state)
-        # when .repo already exists, clean the checkout state first so repo sync can --force-sync
+
+        # A cached fox/ can be corrupt ("unsupported checkout state"), so clean it first.
         if [ -d "$GITHUB_WORKSPACE/fox/.repo" ]; then
           cd "$GITHUB_WORKSPACE/fox" || true
           repo forall -c 'git am --abort 2>/dev/null || true; git rebase --abort 2>/dev/null || true; git reset --hard 2>/dev/null || true; git clean -fdx 2>/dev/null || true' || true
-          # drop the project that corrupts most often (from my logs)
+          # The project that corrupts most often.
           rm -rf "$GITHUB_WORKSPACE/fox/bootable/recovery/.git" || true
           cd "$GITHUB_WORKSPACE/OrangeFox_sync" || cd OrangeFox_sync || true
           cd $GITHUB_WORKSPACE/OrangeFox_sync
         fi
+
         ./legacy/orangefox_sync_legacy.sh --branch 9.0 --path $GITHUB_WORKSPACE/fox || {
           echo "First sync failed, retrying with a force-sync..."
           cd $GITHUB_WORKSPACE/fox
@@ -107,6 +110,7 @@ jobs:
       run: |
         mkdir -p fox/device/infinix/X625D
         cp -r device-tree/* fox/device/infinix/X625D/
+
         ls -R fox/device/infinix/X625D | head -n 50
         ls -lh fox/device/infinix/X625D/prebuilt/
 
@@ -114,14 +118,13 @@ jobs:
       env:
         THEME_SHA: 51b06e501e32fa69df28a507b0a64382be6d2db4
       run: |
-        # gui/theme is a git submodule of bootable/recovery. The sync does not
-        # always initialise it, and patches/0005-0006 were generated against one
-        # exact theme revision, so make sure that revision is what gets patched.
+        # gui/theme is a submodule the sync often skips.
+        # 0005-0007 were made against this exact revision, so pin it before patching.
         THEME=fox/bootable/recovery/gui/theme
         if [ -e "$THEME/.git" ] && [ "$(git -C "$THEME" rev-parse HEAD 2>/dev/null)" = "$THEME_SHA" ]; then
           echo "theme already at $THEME_SHA"
         else
-          # .gitmodules uses an SSH URL that CI cannot use -> fetch over HTTPS.
+          # .gitmodules uses an SSH URL that CI cannot use, so fetch over HTTPS.
           echo "checking out theme at $THEME_SHA"
           rm -rf "$THEME"
           git init -q "$THEME"
@@ -129,32 +132,21 @@ jobs:
           git -C "$THEME" fetch -q --depth=1 origin "$THEME_SHA"
           git -C "$THEME" checkout -q FETCH_HEAD
         fi
+
         test "$(git -C "$THEME" rev-parse HEAD)" = "$THEME_SHA"
 
     - name: Apply device-tree patches to the Fox source
       run: |
-        # Device-tree patches on top of the synced OrangeFox source.
-        # 0001: realtime battery/charge status (status bar battery object polls
-        #       its 1-Hz cached values and requests a redraw on change, so
-        #       plugging/unplugging the cable is visible immediately, without
-        #       having to navigate menus first).
-        # 0003: factory reset formats /data completely, incl. /data/media
-        #       (Settings -> Factory data reset must behave like stock recovery;
-        #       upstream keeps /data/media unless TW_OEM_BUILD is defined).
-        # 0004: the ORS engine sets tw_ors_wipe when the running script wipes or
-        #       formats something, so the theme can tell a wipe from an OTA.
-        # 0005/0006: the compact ORS progress screen ("ota_simple" overlay) then
-        #       shows "Erasing..." + an erase icon for wipes, while a real OTA
-        #       keeps "Updating..." + the download icon. 0006 is a binary patch
-        #       (the two new FullscreenIcons/erase_icon.png).
-        # 0007: the new string in every shipped language (en/id in 0005, the
-        #       rest here), so no language falls back to "[ota_wipe_title]".
+        # Patches are applied on top of the synced source in numeric order.
+        # 0001-0004: realtime battery, 3-finger screenshot, full factory reset, ORS wipe state.
+        # 0005-0007: the "Erasing..." screen for wipes (icon, text, all languages).
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue
           echo "Applying patch $p"
           git apply -v "$p" || { echo "ERROR: $p failed"; git apply -v --reject "$p"; exit 1; }
         done
+
         echo "--- Factory_Reset() after patches ---"
         sed -n '/TWPartitionManager::Factory_Reset(/,/^}/p' partitionmanager.cpp
         echo "--- ORS wipe state after patches ---"
@@ -184,16 +176,16 @@ jobs:
         export FOX_DRASTIC_SIZE_REDUCTION=1
         export USE_CCACHE=1
         export CCACHE_EXEC=$(which ccache)
+
         ccache -z
         source build/envsetup.sh
         lunch omni_X625D-eng
         mka recoveryimage -j$(nproc --all)
         ccache -s
         ls -lh out/target/product/X625D/recovery.img
+
         echo "X625D OrangeFox unofficial $(date -u)" > out/target/product/X625D/build-info.txt
-        # Device-tree commit info so the .img is traceable back to its source commit.
-        # (the device tree is checked out without .git and `.git` does NOT follow `cp *`,
-        # so read the git metadata directly from $GITHUB_WORKSPACE/device-tree.)
+        # Device-tree commit, so the .img is traceable (its .git is not copied).
         DT_SHORT=$(git -C $GITHUB_WORKSPACE/device-tree rev-parse --short HEAD)
         DT_SHA=$(git -C $GITHUB_WORKSPACE/device-tree rev-parse HEAD)
         DT_MSG=$(git -C $GITHUB_WORKSPACE/device-tree log -1 --pretty=%s)
@@ -205,16 +197,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Version scheme: <fox base>-<date>, e.g. 11.1-20261023
-        # The maintainer patch suffix (FOX_MAINTAINER_PATCH_VERSION) is intentionally
-        # not used in the tag: the date already distinguishes runs. (It still shows
-        # up on the recovery's own screen, straight from the device tree.)
-        # Base version is never hardcoded: extracted (generic "R<maior>.<minor>")
-        # from OrangeFox itself, in order of accuracy:
-        #   1. variables.h of the recovery source that this run actually synced
-        #      and will compile (FOX_MAIN_VERSION_STR).
-        #   2. FOX_BASE_VERSION in the sync script used for this run.
-        #   3. Live fetch from the OrangeFox repo (fox_9.0 branch) via GitLab API.
+        # Tag scheme: <fox base>-<date> (e.g. 11.1-20261023), with the base version never hardcoded.
+        # It comes from OrangeFox itself: variables.h of the synced source, then FOX_BASE_VERSION, then the fox_9.0 API.
         FOX_BASE_RAW=""
         if [ -f "$GITHUB_WORKSPACE/fox/bootable/recovery/variables.h" ]; then
           FOX_BASE_RAW="$(grep -m1 -oE 'R[0-9]+\.[0-9]+' "$GITHUB_WORKSPACE/fox/bootable/recovery/variables.h")"
@@ -225,49 +209,33 @@ jobs:
         if [ -z "$FOX_BASE_RAW" ]; then
           FOX_BASE_RAW="$(curl -sfL "https://gitlab.com/api/v4/projects/OrangeFox%2Fbootable%2FRecovery/repository/files/variables.h/raw?ref=fox_9.0" | grep -m1 -oE 'R[0-9]+\.[0-9]+' || true)"
         fi
-        # Last resort fallback so the job still publishes with a placeholder
+
+        # Last resort fallback so the job still publishes with a placeholder.
         [ -z "$FOX_BASE_RAW" ] && FOX_BASE_RAW="R0.0"
         FOX_BASE="${FOX_BASE_RAW#R}"
         echo "OrangeFox base version detected: R$FOX_BASE"
         echo "FOX_BASE=$FOX_BASE" >> $GITHUB_ENV
-        # Stamp the detected version into build-info (keeps the existing timestamp)
+
+        # Stamp the detected version into build-info, keeping the existing timestamp.
         sed -i "1s/unofficial/unofficial R$FOX_BASE/" fox/out/target/product/X625D/build-info.txt
+
         VERSION="${FOX_BASE}"
         DATE=$(date +'%Y%m%d')
         SHORT=$(git -C device-tree rev-parse --short HEAD)
         SHA=$(git -C device-tree rev-parse HEAD)
         BRANCH="${GITHUB_REF_NAME}"
-        # Stable releases get a unique tag so several builds on the same date
-        # never collide: the first build of the day is
-        #   <VERSION>-<DATE>
-        # and the following ones are
-        #   <VERSION>-<DATE>.N   (.1, .2, ...)
-        # The counter scans BOTH release tag names and release tags (drafts are
-        # included).
-        #
-        # Pre-releases do NOT get a dated tag: every pre-release build goes to
-        # one rolling tag
-        #   <VERSION>-pre
-        # whose draft release is replaced each time. The build itself is
-        # identified by its asset name, numbered like the release tags:
-        #   OrangeFox-X625D-<VERSION>-<DATE>-<short>.img       first of the day
-        #   OrangeFox-X625D-<VERSION>-<DATE>.N-<short>.img     N = 1, 2, ...
-        # (dot for the counter, dash before the commit, and no N until there
-        # is a second build that day).
-        # Old assets are kept.
-        #
-        # Every GitHub API call goes through gh_retry: transient failures
-        # (rate limits, 5xx, network hiccups) are retried with 30s backoff
-        # (up to 1 hour) so limits only delay the run. Permanent errors
-        # (missing permissions -> 403 "Resource not accessible", 401/404)
-        # fail the step immediately instead of spinning it for hours.
+
+        # Stable: tag <VERSION>-<DATE>, then <VERSION>-<DATE>.N for later builds that day.
+        # The counter counts release names and tags, drafts included.
+        # Pre-release: always the rolling draft <VERSION>-pre, identified by its asset name.
+        # Asset names look like OrangeFox-X625D-<VERSION>-<DATE>[-.N]-<short>.img.
+        # Every API call goes through gh_retry.
+        # It retries transient errors for up to 1h and fails at once on auth errors.
+
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO_S="${GITHUB_REPOSITORY}"
         gh_retry() {
-          # Retries ONLY transient failures: rate limits (403 "rate limit
-          # exceeded", 429) and network/5xx hiccups. A permanent auth failure
-          # (403 "Resource not accessible", 401, 404) fails the step IMMEDIATELY
-          # instead of burning the run inside a rename step.
+          # Retry only transient errors (rate limit, 429, 5xx, network), and fail at once on 401/403/404.
           local out i
           for i in $(seq 1 120) ; do
             if out=$(gh api "$@" 2>/tmp/gh-api.err); then
@@ -287,10 +255,8 @@ jobs:
         }
 
         all_existing_names() {
-          # releases: every published release, plus every draft pre-release
-          # (drafts are listed for tokens with write access)
+          # Release names (drafts included), then every tag ever created.
           gh_retry "repos/$REPO_S/releases?per_page=100" --paginate --jq '.[].tag_name' || true
-          # tags: every release tag ever created
           gh_retry "repos/$REPO_S/tags?per_page=100" --paginate --jq '.[].name' || true
         }
 
@@ -327,12 +293,9 @@ jobs:
             TAG="${BASE_TAG}"
           fi
 
-          # A commit that was already released must NOT mint a new tag: the
-          # existing release is reused and the Publish step overrides its
-          # assets in place (gh release upload --clobber). Releases carry the
-          # full device-tree commit sha in their notes body, so we match on
-          # that. Drafts and rolling pre-release tags are ignored, so a draft
-          # pre-release can never be promoted into a stable tag.
+          # A commit that was already released gets no new tag; its release is reused and its assets clobbered.
+          # The notes carry the full sha, which is what the match is made on.
+          # Drafts and -pre tags are skipped, so a draft is never promoted.
           RTAG=$(gh_retry "repos/$REPO_S/releases?per_page=100" --paginate \
                    --jq ".[] | select(.draft == false) | select(.tag_name | endswith(\"-pre\") | not) | select((.body | contains(\"$SHA\")) and (.body | contains(\"$VERSION\"))) | .tag_name" \
                    2>/dev/null | head -n1 || true)
@@ -344,28 +307,45 @@ jobs:
         else
           # One rolling draft release for every pre-release build.
           TAG="${VERSION}-pre"
-          # Daily counter, read from the assets already attached to it. They
-          # are kept, so the newest build always has the highest N.
-          # Names look like
-          #   OrangeFox-X625D-<VERSION>-<DATE>-<short>.img      (first of day)
-          #   OrangeFox-X625D-<VERSION>-<DATE>.N-<short>.img    (N = 1, 2, ...)
-          # so only a purely numeric component right after the date is a
-          # counter; the commit is hex and ignored.
+
+          # Counter over the assets kept on the rolling draft.
+          # The first build of the day is ...-<DATE>-<short>.img, later ones are ...-<DATE>.N-<short>.img.
+          # Legacy "-N.<short>" names still count, but an all-digit short id does not.
+          # SEEN separates "nothing today" from "first build exists".
           N=0
+          SEEN=0
+          PREFIX="OrangeFox-X625D-$VERSION-$DATE"
           while IFS= read -r name; do
             [ -z "$name" ] && continue
             case "$name" in
-              "OrangeFox-X625D-$VERSION-$DATE."*)
-                rest="${name#OrangeFox-X625D-$VERSION-$DATE.}"
-                num="${rest%%[.-]*}"
-                if [ -n "$num" ] && [ -z "${num//[0-9]/}" ] && [ "$num" -gt "$N" ]; then
-                  N="$num"
-                fi
+              "$PREFIX".*)
+                # .N-<short>.img
+                rest="${name#"$PREFIX".}"
+                case "$rest" in
+                  [0-9]*-*) num="${rest%%-*}" ;;
+                  *)        num="" ;;
+                esac
+                ;;
+              "$PREFIX"-*)
+                # -<short>.img, or legacy -N.<short>.img (needs its 2nd dot)
+                rest="${name#"$PREFIX"-}"
+                case "$rest" in
+                  [0-9]*.*.*) num="${rest%%.*}" ;;
+                  *)          num="" ;;
+                esac
+                ;;
+              *)
+                continue
                 ;;
             esac
+            SEEN=1
+            if [ -n "$num" ] && [ -z "${num//[0-9]/}" ] && [ "$num" -gt "$N" ]; then
+              N="$num"
+            fi
           done < <(gh api "repos/$REPO_S/releases/tags/$TAG" --jq '.assets[].name' 2>/dev/null || true)
-          if [ "$N" = "0" ]; then
-            # first build of the day: no counter, exactly like a release tag
+
+          if [ "$SEEN" = "0" ]; then
+            # First build of the day: no counter, exactly like a release tag.
             IDENT="${VERSION}-${DATE}-${SHORT}"
           else
             IDENT="${VERSION}-${DATE}.$((N + 1))-${SHORT}"
@@ -373,27 +353,27 @@ jobs:
           echo "pre-release build $IDENT on rolling release $TAG"
         fi
         echo "TAG chosen: $TAG"
-        # Note: two SIMULTANEOUS runs on the same day could grab the same .N
-        # (the check happens before both write). Sequential builds - the normal
-        # usage here - are always strictly incremental.
-        # Both kinds publish a GitHub Release; a pre-release is a draft. The
-        # asset name carries the build identity.
+
+        # Two simultaneous runs could grab the same .N.
+        # Sequential runs, the normal case, are strictly incremental.
+        # The asset name is the build identity.
         FILENAME="OrangeFox-X625D-$IDENT"
         BUILDINFO="build-info-$IDENT.txt"
+
         echo "TAG=$TAG" >> $GITHUB_ENV
         echo "BRANCH=$BRANCH" >> $GITHUB_ENV
         echo "DT_SHA=$SHA" >> $GITHUB_ENV
         echo "FILENAME=$FILENAME" >> $GITHUB_ENV
         echo "BUILDINFO=$BUILDINFO" >> $GITHUB_ENV
+
         cp fox/out/target/product/X625D/recovery.img "$FILENAME.img"
         cp fox/out/target/product/X625D/build-info.txt "$BUILDINFO"
         ls -lh "$FILENAME.img" "$BUILDINFO"
         cat "$BUILDINFO"
 
     - name: Prepare release notes
-      # Changelog = device-tree commits between the previously created release
-      # tag and this build's commit, fetched via the compare API (tags in this
-      # repo point at the device-tree commits directly).
+      # Changelog = device-tree commits between the previous published release and this commit, via the compare API.
+      # Tags in this repo point at device-tree commits directly.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -418,11 +398,9 @@ jobs:
           echo "gh '$*' still failing after 1h" >&2; return 1
         }
 
-        # previous tag: newest PUBLISHED release created BEFORE this one; draft
-        # pre-releases are skipped so a chain of drafts still diffs against the
-        # last real release. (Skip same tag; override runs have a stale
-        # created_at for the reused tag, which is harmless: the changelog then
-        # spans a wider range)
+        # Newest PUBLISHED release before this one.
+        # Drafts are skipped, so a chain of drafts still diffs against the last real release.
+        # An override run reuses a stale created_at, which just widens the range.
         PREVTAG=$(ghc_retry api "repos/$REPO/releases?per_page=100" --paginate \
           --jq '.[] | select(.draft | not) | "\(.created_at) \(.tag_name)"' | sort -r \
           | awk '$2 != "'"$TAG"'" {print $2; exit}')
@@ -453,16 +431,15 @@ jobs:
         cat $GITHUB_WORKSPACE/release-notes.md
 
     - name: Publish release
-      # Both kinds publish a GitHub Release. A pre-release goes to one rolling
-      # draft release (<VERSION>-pre) that is refreshed on every build; a stable
-      # release is published immediately.
+      # Stable goes to a published release.
+      # A pre-release goes to the rolling draft (<VERSION>-pre), refreshed on every build.
       run: |
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO="${GITHUB_REPOSITORY}"
         CREATE_ARGS=()
-        # A pre-release ships the image only: the rolling draft is about the
-        # build, and its notes already carry the build info. Stable releases
-        # keep attaching build-info-*.txt.
+
+        # Pre-releases ship the image only, since the notes carry the build info.
+        # Stable releases also attach build-info-*.txt.
         ASSETS=("$FILENAME.img")
         if [ "${{ inputs.release_type }}" = "release" ]; then
           ASSETS+=("$BUILDINFO")
@@ -470,6 +447,7 @@ jobs:
           CREATE_ARGS+=(--draft --prerelease)
           echo "pre-release -> rolling draft release $TAG (image only)"
         fi
+
         publish() {
           if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
             echo "release $TAG already exists - refreshing its notes and assets"
@@ -477,18 +455,16 @@ jobs:
             gh release upload "$TAG" "${ASSETS[@]}" --clobber -R "$REPO"
           else
             echo "creating release $TAG"
-            # --target pins the tag to the commit this image was built from,
-            # which matters for a draft: its tag is only created when the draft
-            # is published, possibly days later.
-            # "tag exists without a release object" -> fall back to upload
+            # --target pins the tag to the built commit.
+            # This matters because a draft gets its tag only when published.
+            # A tag without a release object falls back to upload.
             gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
                --target "$DT_SHA" "${CREATE_ARGS[@]}" -R "$REPO" "${ASSETS[@]}" ||
               gh release upload "$TAG" "${ASSETS[@]}" --clobber -R "$REPO"
           fi
         }
-        # Same retry policy as the rename step: transient (rate limit / 5xx /
-        # network) is retried with 30s backoff for up to 1 hour; permanent
-        # auth/permission failures fail immediately.
+
+        # Same retry policy as above: 30s backoff, 1h cap, permanent errors fail.
         for i in $(seq 1 120); do
           if out=$(publish 2>&1); then
             printf '%s\n' "$out"
