@@ -147,6 +147,8 @@ jobs:
         #       shows "Erasing..." + an erase icon for wipes, while a real OTA
         #       keeps "Updating..." + the download icon. 0006 is a binary patch
         #       (the two new FullscreenIcons/erase_icon.png).
+        # 0007: the new string in every shipped language (en/id in 0005, the
+        #       rest here), so no language falls back to "[ota_wipe_title]".
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue

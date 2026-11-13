@@ -1,0 +1,120 @@
+diff --git a/gui/theme/common/languages/cs.xml b/gui/theme/common/languages/cs.xml
+index 75a6a10..60ec14a 100644
+--- a/gui/theme/common/languages/cs.xml
++++ b/gui/theme/common/languages/cs.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Installing OTA...</string>
+ 		<string name="ota_simple_title">Updating...</string>
++		<string name="ota_wipe_title">Mazání...</string>
+ 		<string name="ota_simple_log_btn">Log</string>
+ 
+ 		<string name="battery">Battery</string>
+diff --git a/gui/theme/common/languages/de.xml b/gui/theme/common/languages/de.xml
+index 8886a13..077b122 100644
+--- a/gui/theme/common/languages/de.xml
++++ b/gui/theme/common/languages/de.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Installiere OTA...</string>
+ 		<string name="ota_simple_title">Wird aktualisiert...</string>
++		<string name="ota_wipe_title">Wird gelöscht...</string>
+ 		<string name="ota_simple_log_btn">Log</string>
+ 
+ 		<string name="battery">Batterie</string>
+diff --git a/gui/theme/common/languages/el.xml b/gui/theme/common/languages/el.xml
+index e97eeba..b684ae7 100644
+--- a/gui/theme/common/languages/el.xml
++++ b/gui/theme/common/languages/el.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Εγκατάσταση OTA...</string>
+ 		<string name="ota_simple_title">Ενημερώνεται...</string>
++		<string name="ota_wipe_title">Διαγράφεται...</string>
+ 		<string name="ota_simple_log_btn">Αρχείο καταγραφής</string>
+ 
+ 		<string name="battery">Μπαταρία</string>
+diff --git a/gui/theme/common/languages/fr.xml b/gui/theme/common/languages/fr.xml
+index 72341af..a08a03b 100644
+--- a/gui/theme/common/languages/fr.xml
++++ b/gui/theme/common/languages/fr.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Installation OTA...</string>
+ 		<string name="ota_simple_title">Mise à jour...</string>
++		<string name="ota_wipe_title">Effacement...</string>
+ 		<string name="ota_simple_log_btn">Journal</string>
+ 
+ 		<string name="battery">Batterie</string>
+diff --git a/gui/theme/common/languages/it.xml b/gui/theme/common/languages/it.xml
+index eae18fa..28a6172 100644
+--- a/gui/theme/common/languages/it.xml
++++ b/gui/theme/common/languages/it.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Installazione OTA...</string>
+ 		<string name="ota_simple_title">Aggiornamento...</string>
++		<string name="ota_wipe_title">Cancellazione...</string>
+ 		<string name="ota_simple_log_btn">Log</string>
+ 
+ 		<string name="battery">Batteria</string>
+diff --git a/gui/theme/common/languages/pl.xml b/gui/theme/common/languages/pl.xml
+index 6632cee..8543aa2 100644
+--- a/gui/theme/common/languages/pl.xml
++++ b/gui/theme/common/languages/pl.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Instaluję OTA...</string>
+ 		<string name="ota_simple_title">Aktualizacja...</string>
++		<string name="ota_wipe_title">Usuwanie...</string>
+ 		<string name="ota_simple_log_btn">Log</string>
+ 
+ 		<string name="battery">Bateria</string>
+diff --git a/gui/theme/common/languages/ro.xml b/gui/theme/common/languages/ro.xml
+index 11d2a56..32b58f5 100644
+--- a/gui/theme/common/languages/ro.xml
++++ b/gui/theme/common/languages/ro.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Instalare OTA...</string>
+ 		<string name="ota_simple_title">Actualizare...</string>
++		<string name="ota_wipe_title">Ștergere...</string>
+ 		<string name="ota_simple_log_btn">Jurnal</string>
+ 
+ 		<string name="battery">Baterie</string>
+diff --git a/gui/theme/common/languages/ru.xml b/gui/theme/common/languages/ru.xml
+index df426a2..5407b56 100644
+--- a/gui/theme/common/languages/ru.xml
++++ b/gui/theme/common/languages/ru.xml
+@@ -1006,6 +1006,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Установка OTA</string>
+ 		<string name="ota_simple_title">Обновление...</string>
++		<string name="ota_wipe_title">Удаление...</string>
+ 		<string name="ota_simple_log_btn">Лог</string>
+ 
+ 		<string name="battery">Батарея</string>
+diff --git a/gui/theme/common/languages/tr.xml b/gui/theme/common/languages/tr.xml
+index 935d1fc..cdfe42e 100644
+--- a/gui/theme/common/languages/tr.xml
++++ b/gui/theme/common/languages/tr.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">OTA yükleniyor...</string>
+ 		<string name="ota_simple_title">Güncelleniyor...</string>
++		<string name="ota_wipe_title">Siliniyor...</string>
+ 		<string name="ota_simple_log_btn">Günlük (Log)</string>
+ 
+ 		<string name="battery">Pil</string>
+diff --git a/gui/theme/common/languages/ua.xml b/gui/theme/common/languages/ua.xml
+index f4cf262..779d0cb 100644
+--- a/gui/theme/common/languages/ua.xml
++++ b/gui/theme/common/languages/ua.xml
+@@ -881,6 +881,7 @@
+ 		<!-- OTA working page -->
+ 		<string name="ota_console_title">Встановлення ОТА...</string>
+ 		<string name="ota_simple_title">Оновлення...</string>
++		<string name="ota_wipe_title">Видалення...</string>
+ 		<string name="ota_simple_log_btn">Звіт</string>
+ 
+ 		<string name="battery">Батарея</string>
