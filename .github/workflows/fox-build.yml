@@ -113,17 +113,42 @@ jobs:
 
     - name: Apply device-tree patches to the Fox source
       run: |
-        # Device-tree patches on top of the synced OrangeFox gui source.
+        # Device-tree patches on top of the synced OrangeFox source.
         # 0001: realtime battery/charge status (status bar battery object polls
         #       its 1-Hz cached values and requests a redraw on change, so
         #       plugging/unplugging the cable is visible immediately, without
         #       having to navigate menus first).
+        # 0003: factory reset formats /data completely, incl. /data/media
+        #       (Settings -> Factory data reset must behave like stock recovery;
+        #       upstream keeps /data/media unless TW_OEM_BUILD is defined).
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue
           echo "Applying patch $p"
           git apply -v "$p" || { echo "ERROR: $p failed"; git apply -v --reject "$p"; exit 1; }
         done
+        echo "--- Factory_Reset() after patches ---"
+        sed -n '/TWPartitionManager::Factory_Reset(/,/^}/p' partitionmanager.cpp
+
+    - name: Wipe screen shows "Erasing..." with an erase icon
+      run: |
+        # ORS runs (factory reset, OTA) swap the console for the compact
+        # "ota_simple" overlay: ota_icon.png + the ota_simple_title string
+        # ("Updating..."). Rewrite the label and the icon in the theme checkout
+        # so the screen matches what is actually happening.
+        THEME=fox/bootable/recovery/gui/theme
+        if [ ! -d "$THEME/portrait_hdpi" ]; then
+          # gui/theme is a git submodule (gitlab.com/OrangeFox/misc/theme); the
+          # sync script does not always initialise it. Clone it over HTTPS
+          # (the .gitmodules URL is SSH-only) so the overrides below apply.
+          echo "theme checkout missing at $THEME, cloning it"
+          rm -rf "$THEME"
+          git clone --depth=1 https://gitlab.com/OrangeFox/misc/theme.git "$THEME"
+        fi
+        python3 device-tree/scripts/wipe-screen-erase.py "$THEME"
+        echo "--- resulting strings ---"
+        grep -h ota_simple_title "$THEME"/common/languages/en.xml \
+          "$THEME"/common/languages/id.xml || true
 
     - name: Setup ccache (incremental, no run_id)
       uses: hendrikmuhs/ccache-action@v1.2.24
