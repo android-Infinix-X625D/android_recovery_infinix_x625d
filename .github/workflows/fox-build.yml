@@ -147,6 +147,8 @@ jobs:
           git apply -v "$p" || { echo "ERROR: $p failed"; git apply -v --reject "$p"; exit 1; }
         done
 
+        # Print the patched code so the log proves each patch landed where intended.
+        # git apply can succeed with fuzz or in the wrong place, so the result is shown, not assumed.
         echo "--- Factory_Reset() after patches ---"
         sed -n '/TWPartitionManager::Factory_Reset(/,/^}/p' partitionmanager.cpp
         echo "--- ORS wipe state after patches ---"
