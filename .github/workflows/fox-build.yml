@@ -342,7 +342,9 @@ jobs:
             if [ -n "$num" ] && [ -z "${num//[0-9]/}" ] && [ "$num" -gt "$N" ]; then
               N="$num"
             fi
-          done < <(gh api "repos/$REPO_S/releases/tags/$TAG" --jq '.assets[].name' 2>/dev/null || true)
+          # The tag endpoint 404s for a draft, so read the draft's assets from the release list.
+          done < <(gh_retry "repos/$REPO_S/releases?per_page=100" --paginate \
+                     --jq ".[] | select(.tag_name == \"$TAG\") | .assets[].name" 2>/dev/null || true)
 
           if [ "$SEEN" = "0" ]; then
             # First build of the day: no counter, exactly like a release tag.
@@ -372,8 +374,8 @@ jobs:
         cat "$BUILDINFO"
 
     - name: Prepare release notes
-      # Changelog = device-tree commits between the previous published release and this commit, via the compare API.
-      # Tags in this repo point at device-tree commits directly.
+      # Stable: changelog from the previous published release.
+      # Pre-release: the build plus one compare link, to the previous pre build or else to the last stable release.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -397,6 +399,46 @@ jobs:
           done
           echo "gh '$*' still failing after 1h" >&2; return 1
         }
+
+        if [ "${{ inputs.release_type }}" != "release" ]; then
+          # Previous build = newest asset on the draft, other than this one.
+          PREV=$(ghc_retry api "repos/$REPO/releases?per_page=100" --paginate \
+                   --jq ".[] | select(.tag_name == \"$TAG\") | .assets[] | \"\(.created_at) \(.name)\"" \
+                 | sort -r | awk -v cur="$FILENAME.img" '$2 != cur {print $2; exit}')
+          PREVSHORT=""
+          if [ -n "$PREV" ]; then
+            PREVSHORT="${PREV%.img}"
+            PREVSHORT="${PREVSHORT##*-}"
+            case "$PREVSHORT" in *.*) PREVSHORT="${PREVSHORT##*.}" ;; esac
+          fi
+          PREVSHA=""
+          if [ -n "$PREVSHORT" ]; then
+            PREVSHA=$(ghc_retry api "repos/$REPO/commits/$PREVSHORT" --jq .sha 2>/dev/null || true)
+          fi
+          # No earlier pre build yet -> diff against the last stable release.
+          PREVTAG=""
+          if [ -z "$PREVSHA" ]; then
+            PREVTAG=$(ghc_retry api "repos/$REPO/releases?per_page=100" --paginate \
+                        --jq '.[] | select(.draft | not) | "\(.created_at) \(.tag_name)"' \
+                      | sort -r | awk '$2 != "'"$TAG"'" {print $2; exit}')
+          fi
+
+          {
+            echo "Unofficial OrangeFox Recovery for Infinix X625D $TAG"
+            echo ""
+            echo "Build: \`$FILENAME.img\`"
+            echo ""
+            if [ -n "$PREVSHA" ]; then
+              echo "Changes since the previous build ([\`$PREVSHORT\`](https://github.com/$REPO/commit/$PREVSHA)): [compare](https://github.com/$REPO/compare/$PREVSHA...$SHA)"
+            elif [ -n "$PREVTAG" ]; then
+              echo "Changes since the last stable release ([\`$PREVTAG\`](https://github.com/$REPO/releases/tag/$PREVTAG)): [compare](https://github.com/$REPO/compare/$PREVTAG...$SHA)"
+            else
+              echo "First build."
+            fi
+          } > $GITHUB_WORKSPACE/release-notes.md
+          cat $GITHUB_WORKSPACE/release-notes.md
+          exit 0
+        fi
 
         # Newest PUBLISHED release before this one.
         # Drafts are skipped, so a chain of drafts still diffs against the last real release.
@@ -431,15 +473,16 @@ jobs:
         cat $GITHUB_WORKSPACE/release-notes.md
 
     - name: Publish release
-      # Stable goes to a published release.
-      # A pre-release goes to the rolling draft (<VERSION>-pre), refreshed on every build.
+      # Stable goes to a published release with notes and build-info.
+      # A pre-release goes to the rolling draft (<VERSION>-pre) with the image only.
       run: |
         export GH_TOKEN="${GITHUB_TOKEN}"
         REPO="${GITHUB_REPOSITORY}"
         CREATE_ARGS=()
+        EDIT_ARGS=(--title "$TAG" --notes-file release-notes.md)
 
-        # Pre-releases ship the image only, since the notes carry the build info.
-        # Stable releases also attach build-info-*.txt.
+        # A pre-release keeps the images only: the draft is a holder for the
+        # builds, and build-info stays a stable-release asset.
         ASSETS=("$FILENAME.img")
         if [ "${{ inputs.release_type }}" = "release" ]; then
           ASSETS+=("$BUILDINFO")
@@ -451,14 +494,14 @@ jobs:
         publish() {
           if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
             echo "release $TAG already exists - refreshing its notes and assets"
-            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md -R "$REPO"
+            gh release edit "$TAG" "${EDIT_ARGS[@]}" -R "$REPO"
             gh release upload "$TAG" "${ASSETS[@]}" --clobber -R "$REPO"
           else
             echo "creating release $TAG"
             # --target pins the tag to the built commit.
             # This matters because a draft gets its tag only when published.
             # A tag without a release object falls back to upload.
-            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
+            gh release create "$TAG" "${EDIT_ARGS[@]}" \
                --target "$DT_SHA" "${CREATE_ARGS[@]}" -R "$REPO" "${ASSETS[@]}" ||
               gh release upload "$TAG" "${ASSETS[@]}" --clobber -R "$REPO"
           fi
