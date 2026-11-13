@@ -249,10 +249,11 @@ jobs:
         # one rolling tag
         #   <VERSION>-pre
         # whose draft release is replaced each time. The build itself is
-        # identified by its asset name:
-        #   OrangeFox-X625D-<VERSION>-<DATE>-N.<short>.img
-        # where N counts that day's pre-release assets (1, 2, ...) and old
-        # assets are kept.
+        # identified by its asset name, numbered like the release tags:
+        #   OrangeFox-X625D-<VERSION>-<DATE>.<short>.img       first of the day
+        #   OrangeFox-X625D-<VERSION>-<DATE>.N.<short>.img     N = 1, 2, ...
+        # (dot, not dash, and no N until there is a second build that day).
+        # Old assets are kept.
         #
         # Every GitHub API call goes through gh_retry: transient failures
         # (rate limits, 5xx, network hiccups) are retried with 30s backoff
@@ -344,20 +345,30 @@ jobs:
           TAG="${VERSION}-pre"
           # Daily counter, read from the assets already attached to it. They
           # are kept, so the newest build always has the highest N.
+          # Names look like
+          #   OrangeFox-X625D-<VERSION>-<DATE>.<short>.img      (first of day)
+          #   OrangeFox-X625D-<VERSION>-<DATE>.N.<short>.img    (N = 1, 2, ...)
+          # so only a purely numeric component right after the date is a
+          # counter; the commit is hex and ignored.
           N=0
           while IFS= read -r name; do
             [ -z "$name" ] && continue
             case "$name" in
-              "OrangeFox-X625D-$VERSION-$DATE-"*)
-                n="${name#OrangeFox-X625D-$VERSION-$DATE-}"
-                n="${n%%.*}"
-                if [ -n "$n" ] && [ -z "${n//[0-9]/}" ] && [ "$n" -gt "$N" ]; then
-                  N="$n"
+              "OrangeFox-X625D-$VERSION-$DATE."*)
+                rest="${name#OrangeFox-X625D-$VERSION-$DATE.}"
+                num="${rest%%.*}"
+                if [ -n "$num" ] && [ -z "${num//[0-9]/}" ] && [ "$num" -gt "$N" ]; then
+                  N="$num"
                 fi
                 ;;
             esac
           done < <(gh api "repos/$REPO_S/releases/tags/$TAG" --jq '.assets[].name' 2>/dev/null || true)
-          IDENT="${VERSION}-${DATE}-$((N + 1)).${SHORT}"
+          if [ "$N" = "0" ]; then
+            # first build of the day: no counter, exactly like a release tag
+            IDENT="${VERSION}-${DATE}.${SHORT}"
+          else
+            IDENT="${VERSION}-${DATE}.$((N + 1)).${SHORT}"
+          fi
           echo "pre-release build $IDENT on rolling release $TAG"
         fi
         echo "TAG chosen: $TAG"
