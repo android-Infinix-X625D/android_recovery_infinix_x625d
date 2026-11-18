@@ -249,3 +249,16 @@ service dt2w_enable /sbin/dt2w_enable.sh
 # simply never shows up in init.svc.*).
 on property:init.svc.recovery=running
     start dt2w_enable
+
+# Brightness persistence: OrangeFox saves its settings (incl. tw_brightness)
+# in /data/media/0/Fox/.foxs but never creates the "Fox" folder -> the save
+# silently fails and every boot starts at max brightness. Create it here,
+# after the FDE decrypt.
+service fox_persist /sbin/sh /sbin/fox_persist.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:recovery:s0
+
+on property:init.svc.recovery=running
+    start fox_persist
