@@ -8,6 +8,16 @@
 # answers -> repeated USB resets, mtp-detect "failed to open session".
 # So the mtp_adb configuration links: ffs.adb + ffs.mtp.
 # TW_EXCLUDE_DEFAULT_USB_INIT=true, so this file owns the gadget; keep it enabled.
+#
+# USB IS GATED ON DECRYPTION (2026-11-19): the gadget is not bound at all until
+# twrp.decrypt.done=true, which Post_Decrypt() sets after a successful FDE/FBE
+# unlock. Neither ADB nor MTP is exposed on the decrypt screen. Once decrypted,
+# ffs.ready + decrypt.done bind an ADB-ONLY gadget (ffs.mtp has no descriptors
+# yet, and f_fs fails the whole bind with -ENOTSUPP if a linked function has
+# none), then mtp.ready rebinds with adb+mtp. So ADB never depends on MTP being
+# enabled: with MTP off, only the adb-only bind runs. Unencrypted data has no
+# twrp.decrypt.done; there MTP starts at boot and the combined mtp.ready +
+# ffs.ready trigger binds adb+mtp.
 
 on init
     mkdir /config
@@ -45,7 +55,30 @@ on property:ro.debuggable=1
     write /sys/class/udc/musb-hdrc/device/cmode 2
     start adbd
 
-on property:sys.usb.ffs.ready=1
+# adbd is ready, but USB stays UNBOUND until decryption finishes (see the next
+# trigger), so nothing is exposed on the decrypt screen. Do NOT bind here.
+
+# Decryption finished (Post_Decrypt sets twrp.decrypt.done=true): bind an
+# ADB-ONLY gadget. ffs.mtp has no descriptors yet and f_fs fails the whole bind
+# with -ENOTSUPP if a linked function has none, so adb must be alone here. This
+# also keeps ADB working when MTP is disabled - it never waits for the MTP daemon.
+on property:sys.usb.ffs.ready=1 && property:twrp.decrypt.done=true
+    write /config/usb_gadget/g1/UDC "none"
+    rm /config/usb_gadget/g1/configs/b.1/f1
+    rm /config/usb_gadget/g1/configs/b.1/f2
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "adb"
+    write /config/usb_gadget/g1/idVendor 0x18d1
+    write /config/usb_gadget/g1/idProduct 0x4ee2
+    symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f1
+    write /config/usb_gadget/g1/UDC "musb-hdrc"
+    setprop sys.usb.state "adb"
+
+# MTP daemon has written its descriptors AND adbd is ready: rebind with adb+mtp.
+# The combined trigger also covers unencrypted data, where there is no
+# decrypt.done and MTP starts at boot: whichever property arrives second binds
+# the gadget. ADB drops for one re-enumeration and comes back; no_disconnect
+# keeps adbd alive.
+on property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.ffs.ready=1
     write /config/usb_gadget/g1/UDC "none"
     rm /config/usb_gadget/g1/configs/b.1/f1
     rm /config/usb_gadget/g1/configs/b.1/f2
@@ -57,17 +90,20 @@ on property:sys.usb.ffs.ready=1
     write /config/usb_gadget/g1/UDC "musb-hdrc"
     setprop sys.usb.state "mtp,adb"
 
-on property:sys.usb.ffs.mtp.ready=1
+# MTP turned off after decryption (Disable_MTP sets mtp.ready=0 before killing
+# the daemon): drop ffs.mtp and fall back to adb-only, otherwise the PC keeps
+# seeing a dead MTP interface. The decrypt.done condition keeps this from
+# binding USB before the decrypt screen. no_disconnect keeps adbd alive.
+on property:sys.usb.ffs.mtp.ready=0 && property:twrp.decrypt.done=true
     write /config/usb_gadget/g1/UDC "none"
     rm /config/usb_gadget/g1/configs/b.1/f1
     rm /config/usb_gadget/g1/configs/b.1/f2
-    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "mtp_adb"
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "adb"
     write /config/usb_gadget/g1/idVendor 0x18d1
     write /config/usb_gadget/g1/idProduct 0x4ee2
     symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f1
-    symlink /config/usb_gadget/g1/functions/ffs.mtp /config/usb_gadget/g1/configs/b.1/f2
     write /config/usb_gadget/g1/UDC "musb-hdrc"
-    setprop sys.usb.state "mtp,adb"
+    setprop sys.usb.state "adb"
 
 on post-fs
     symlink /dev/block/sda /dev/block/mmcblk0boot0
