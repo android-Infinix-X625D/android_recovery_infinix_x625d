@@ -140,6 +140,7 @@ jobs:
         # Patches are applied on top of the synced source in numeric order.
         # 0001-0004: realtime battery, 3-finger screenshot, full factory reset, ORS wipe state.
         # 0005-0007: the "Erasing..." screen for wipes (icon, text, all languages).
+        # 0008: fast boot - defer the /data size scan that delays the UI after decryption.
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue
@@ -155,6 +156,9 @@ jobs:
         grep -n "tw_ors_wipe" openrecoveryscript.cpp
         echo "--- ota_simple page after patches ---"
         sed -n '/<page name="ota_simple">/,/<\/page>/p' gui/theme/portrait_hdpi/pages/universal.xml | head -40
+
+        echo "--- deferred data size scan after patches ---"
+        grep -n "quick_data_size\|Data_Size_Pending" partition.cpp partitionmanager.cpp partitions.hpp | head -20 || true
 
     - name: Setup ccache (incremental, no run_id)
       uses: hendrikmuhs/ccache-action@v1.2.24

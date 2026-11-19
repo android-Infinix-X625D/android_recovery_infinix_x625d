@@ -1,0 +1,125 @@
+diff --git a/partition.cpp b/partition.cpp
+index f8897f6..dcb1498 100644
+--- a/partition.cpp
++++ b/partition.cpp
+@@ -248,6 +248,7 @@ TWPartition::TWPartition() {
+ 	Used = 0;
+ 	Free = 0;
+ 	Backup_Size = 0;
++	Data_Size_Pending = false;
+ 	Can_Be_Encrypted = false;
+ 	Is_Encrypted = false;
+ 	Is_Decrypted = false;
+@@ -3031,7 +3032,7 @@ bool TWPartition::Restore_Image(PartitionSettings *part_settings) {
+ 	return true;
+ }
+ 
+-bool TWPartition::Update_Size(bool Display_Error) {
++bool TWPartition::Update_Size(bool Display_Error, bool quick_data_size) {
+ 	bool ret = false, Was_Already_Mounted = false;
+ 
+ 	Find_Actual_Block_Device();
+@@ -3063,11 +3064,23 @@ bool TWPartition::Update_Size(bool Display_Error) {
+ 
+ 	if (Has_Data_Media) {
+ 		if (Mount(Display_Error)) {
+-			Used = backup_exclusions.Get_Folder_Size(Mount_Point);
+-			Backup_Size = Used;
+-			int bak = (int)(Used / 1048576LLU);
+-			int fre = (int)(Free / 1048576LLU);
+-			LOGINFO("Data backup size is %iMB, free: %iMB.\n", bak, fre);
++			if (quick_data_size) {
++				// The recursive scan below walks all of /data (minus /data/media)
++				// and costs seconds right after decryption. statfs already gave us
++				// Size/Used/Free at this point, so keep those and mark the backup
++				// size as pending: it is computed when the backup page is opened
++				// (Get_Partition_List) or when any full size refresh runs.
++				Data_Size_Pending = true;
++				int fre = (int)(Free / 1048576LLU);
++				LOGINFO("Data size scan deferred, free: %iMB.\n", fre);
++			} else {
++				Used = backup_exclusions.Get_Folder_Size(Mount_Point);
++				Backup_Size = Used;
++				Data_Size_Pending = false;
++				int bak = (int)(Used / 1048576LLU);
++				int fre = (int)(Free / 1048576LLU);
++				LOGINFO("Data backup size is %iMB, free: %iMB.\n", bak, fre);
++			}
+ 		} else {
+ 			if (!Was_Already_Mounted)
+ 				UnMount(false);
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index 57cb2a1..28108bb 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -2029,7 +2029,7 @@ int TWPartitionManager::Resize_By_Path(string Path, bool Display_Error)
+   return false;
+ }
+ 
+-void TWPartitionManager::Update_System_Details(void)
++void TWPartitionManager::Update_System_Details(bool quick_data_size)
+ {
+   std::vector < TWPartition * >::iterator iter;
+   int data_size = 0;
+@@ -2038,7 +2038,7 @@ void TWPartitionManager::Update_System_Details(void)
+   TWFunc::SetPerformanceMode(true);
+   for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
+     {
+-      (*iter)->Update_Size(true);
++      (*iter)->Update_Size(true, quick_data_size);
+       if ((*iter)->Can_Be_Mounted)
+ 	{
+ 	  if ((*iter)->Mount_Point == Get_Android_Root_Path())
+@@ -2203,7 +2203,10 @@ void TWPartitionManager::Post_Decrypt(const string & Block_Device)
+ 	  DataManager::SetValue("tw_settings_path", "/data/media/0");
+ 	  dat->UnMount(false);
+ 	}
+-      Update_System_Details();
++      // Skipping the /data size scan here: it walks all of /data (minus media)
++      // and delays the main UI for seconds right after decryption. statfs values
++      // are enough for the boot screen; Backup_Size is computed on demand.
++      Update_System_Details(true);
+       Output_Partition(dat);
+       UnMount_Main_Partitions();
+     }
+@@ -2971,6 +2974,10 @@ void TWPartitionManager::Get_Partition_List(string ListType,
+ 	      && (*iter)->Is_Present)
+ 	    {
+ 	      struct PartitionList part;
++	      if ((*iter)->Data_Size_Pending) {
++		LOGINFO("Computing deferred /data backup size...\n");
++		(*iter)->Update_Size(true);
++	      }
+ 	      Backup_Size = (*iter)->Backup_Size;
+ 	      if ((*iter)->Has_SubPartition)
+ 		{
+diff --git a/partitions.hpp b/partitions.hpp
+index 0050698..9ffc0ce 100644
+--- a/partitions.hpp
++++ b/partitions.hpp
+@@ -153,7 +153,7 @@ public:
+ 	bool Decrypt(string Password);                                            // Decrypts the partition, return 0 for failure and -1 for success
+ 	bool Wipe_Encryption();                                                   // Ignores wipe commands for /data/media devices and formats the original block device
+ 	void Check_FS_Type();                                                     // Checks the fs type using blkid, does not do anything on MTD / yaffs2 because this crashes on some devices
+-	bool Update_Size(bool Display_Error);                                     // Updates size information
++	bool Update_Size(bool Display_Error, bool quick_data_size = false);       // Updates size information; quick_data_size skips the /data size scan
+ 	void Recreate_Media_Folder();                                             // Recreates the /data/media folder
+ 
+ 	bool Flash_Image(PartitionSettings *part_settings);                                        // Flashes an image to the partition
+@@ -260,6 +260,7 @@ private:
+ 	unsigned long long Used;                                                  // Overall used space
+ 	unsigned long long Free;                                                  // Overall free space
+ 	unsigned long long Backup_Size;                                           // Backup size -- may be different than used space especially when /data/media is present
++	bool Data_Size_Pending;                                                   // /data size scan was skipped, compute Backup_Size before it is displayed
+ 	unsigned long long Restore_Size;                                          // Restore size of the current restore operation
+ 	bool Can_Be_Encrypted;                                                    // This partition might be encrypted, affects error handling, can only be true if crypto support is compiled in
+ 	bool Is_Encrypted;                                                        // This partition is thought to be encrypted -- it wouldn't mount for some reason, only avialble with crypto support
+@@ -352,7 +353,7 @@ public:
+ 	int Wipe_Media_From_Data();                                               // Removes and recreates the media folder on /data/media devices
+ 	int Repair_By_Path(string Path, bool Display_Error);                      // Repairs a partition based on path
+ 	int Resize_By_Path(string Path, bool Display_Error);                      // Resizes a partition based on path
+-	void Update_System_Details();                                             // Updates fstab, file systems, sizes, etc.
++	void Update_System_Details(bool quick_data_size = false);                  // Updates fstab, file systems, sizes, etc.
+ 	void Update_System_Details_OTA_Survival();                                             // Updates fstab, file systems, sizes, etc.
+ 	int Decrypt_Device(string Password, int user_id = 0);                     // Attempt to decrypt any encrypted partitions
+ 	void Parse_Users();                                                       // Parse FBE users
