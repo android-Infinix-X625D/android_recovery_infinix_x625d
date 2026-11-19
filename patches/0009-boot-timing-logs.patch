@@ -1,0 +1,196 @@
+diff --git a/gui/gui.cpp b/gui/gui.cpp
+index 723b710..700c819 100644
+--- a/gui/gui.cpp
++++ b/gui/gui.cpp
+@@ -718,8 +718,10 @@ int gui_forceRender(void)
+ int gui_changePage(std::string newPage)
+ {
+ 	LOGINFO("Set page: '%s'\n", newPage.c_str());
++	tw_log_stamp(); printf("I:[boot] page '%s' load+render start\n", newPage.c_str());
+ 	PageManager::ChangePage(newPage);
+ 	gForceRender.set_value(1);
++	LOGTIME("[boot] page '%s' load+render done\n", newPage.c_str());
+ 	return 0;
+ }
+ 
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index 28108bb..14d2a24 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -2172,6 +2172,7 @@ void TWPartitionManager::Update_System_Details(bool quick_data_size)
+ 
+ void TWPartitionManager::Post_Decrypt(const string & Block_Device)
+ {
++  LOGTIME("[boot] Post_Decrypt start\n");
+   TWPartition *dat = Find_Partition_By_Path("/data");
+   if (dat != NULL)
+     {
+@@ -2189,11 +2190,13 @@ void TWPartitionManager::Post_Decrypt(const string & Block_Device)
+ 	  gui_msg("decrypt_success_nodev=Data successfully decrypted");
+ 	}
+ 	  property_set("twrp.decrypt.done", "true");
++      LOGTIME("[boot] decrypt.done set\n");
+       dat->Setup_File_System(false);
+       dat->Current_File_System = dat->Fstab_File_System;	// Needed if we're ignoring blkid because encrypted devices start out as emmc
+ 
+       // Sleep for a bit so that the device will be ready
+       sleep(1);
++      LOGTIME("[boot] Post_Decrypt settle done\n");
+       if (dat->Has_Data_Media && dat->Mount(false)
+ 	  && TWFunc::Path_Exists("/data/media/0"))
+ 	{
+@@ -2207,8 +2210,10 @@ void TWPartitionManager::Post_Decrypt(const string & Block_Device)
+       // and delays the main UI for seconds right after decryption. statfs values
+       // are enough for the boot screen; Backup_Size is computed on demand.
+       Update_System_Details(true);
++      LOGTIME("[boot] Post_Decrypt sizes done\n");
+       Output_Partition(dat);
+       UnMount_Main_Partitions();
++      LOGTIME("[boot] Post_Decrypt done\n");
+     }
+   else
+     LOGERR("Unable to locate data partition.\n");
+diff --git a/twcommon.h b/twcommon.h
+index 0895428..ea971f8 100644
+--- a/twcommon.h
++++ b/twcommon.h
+@@ -19,10 +19,22 @@
+ #ifndef TWCOMMON_HPP
+ #define TWCOMMON_HPP
+ 
++#include <stdio.h>
++#include <time.h>
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
++// Monotonic timestamp prefix for boot phase measurements. LOGTIME lines make
++// the recovery log show how long each startup step actually took.
++static inline void tw_log_stamp(void) {
++	struct timespec tw_ts;
++	clock_gettime(CLOCK_MONOTONIC, &tw_ts);
++	printf("[%6ld.%03ld] ", (long)(tw_ts.tv_sec % 100000), (long)(tw_ts.tv_nsec / 1000000));
++}
++#define LOGTIME(...) do { tw_log_stamp(); printf("I:" __VA_ARGS__); } while (0)
++
+ #ifndef BUILD_TWRPTAR_MAIN
+ #include "gui/gui.h"
+ #define LOGERR(...) gui_print_color("error", "E:" __VA_ARGS__)
+diff --git a/twrp-functions.cpp b/twrp-functions.cpp
+index d79073e..834861c 100755
+--- a/twrp-functions.cpp
++++ b/twrp-functions.cpp
+@@ -339,7 +339,9 @@ bool TWFunc::RunFoxScript(std::string script)
+ 
+     chmod(script.c_str(), S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+     TWFunc::Exec_Cmd(script);
+-    usleep(500000);
++    // The script runs synchronously, so a short settle delay is enough. This is
++    // called twice during boot and twice 0.5s used to add a full second there.
++    usleep(50000);
+     return true;
+ }
+ 
+diff --git a/twrp.cpp b/twrp.cpp
+index 7152f4d..ae4b435 100755
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -102,6 +102,7 @@ int main(int argc, char **argv)
+   setbuf(stderr, NULL);
+ 
+   signal(SIGPIPE, SIG_IGN);
++  LOGTIME("[boot] twrp main start\n");
+ 
+   // Handle ADB sideload
+   if (argc == 3 && strcmp(argv[1], "--adbd") == 0)
+@@ -279,6 +280,7 @@ int main(int argc, char **argv)
+ 
+ 	// Load up all the resources
+ 	gui_loadResources();
++	LOGTIME("[boot] gui_loadResources done\n");
+ 
+ 	bool Shutdown = false;
+ 
+@@ -397,9 +399,11 @@ int main(int argc, char **argv)
+ 	if (gui_startPage("decrypt", 1, 1) != 0) {
+ 		LOGERR("Failed to start decrypt GUI page.\n");
+ 		} else {
++			LOGTIME("[boot] decrypt page returned\n");
+ 			// Check for and load custom theme if present
+ 			TWFunc::check_selinux_support();
+ 			gui_loadCustomResources();
++			LOGTIME("[boot] custom resources done\n");
+ 			// OrangeFox - make note of this decryption
+ 			DataManager::SetValue("OTA_decrypted", "1");
+ 			#ifdef FOX_OLD_DECRYPT_RELOAD
+@@ -418,15 +422,19 @@ int main(int argc, char **argv)
+ 
+ 	// Fixup the RTC clock on devices which require it
+ 	if (crash_counter == 0) TWFunc::Fixup_Time_On_Boot();
++	LOGTIME("[boot] time fixup done\n");
+ 
+ 	// Read the settings file
+ 	TWFunc::Update_Log_File();
+ 	DataManager::ReadSettingsFile();
++	LOGTIME("[boot] settings read\n");
+ 	PageManager::LoadLanguage(DataManager::GetStrValue("tw_language"));
+ 	GUIConsole::Translate_Now();
++	LOGTIME("[boot] language loaded\n");
+ 
+   	// implement any relevant dm-verity/forced-encryption build vars
+   	TWFunc::Setup_Verity_Forced_Encryption();
++	LOGTIME("[boot] verity setup done\n");
+ 
+ 	// Run any outstanding OpenRecoveryScript
+ 	std::string cacheDir = TWFunc::get_log_dir();
+@@ -437,9 +445,11 @@ int main(int argc, char **argv)
+ 	if (TWFunc::Path_Exists(SCRIPT_FILE_TMP) || (DataManager::GetIntValue(TW_IS_ENCRYPTED) == 0 && TWFunc::Path_Exists(orsFile))) {
+ 		OpenRecoveryScript::Run_OpenRecoveryScript();
+ 	}
++	LOGTIME("[boot] ORS check done\n");
+ 
+   	// call OrangeFox startup code
+   	TWFunc::OrangeFox_Startup();
++	LOGTIME("[boot] OrangeFox_Startup done\n");
+ 
+ #ifdef FOX_ADVANCED_SECURITY
+ 	LOGINFO("ADB & MTP disabled by maintainer\n");
+@@ -459,6 +469,7 @@ int main(int argc, char **argv)
+ 		else
+ 			gui_msg("mtp_enabled=MTP Enabled");
+ 		property_set("mtp.crash_check", "0");
++		LOGTIME("[boot] MTP start done\n");
+ 	} else if (strcmp(mtp_crash_check, "0")) {
+ 		gui_warn("mtp_crash=MTP Crashed, not starting MTP on boot.");
+ 		DataManager::SetValue("tw_mtp_enabled", 0);
+@@ -469,6 +480,7 @@ int main(int argc, char **argv)
+ 	}
+ #endif
+ #endif
++	LOGTIME("[boot] MTP block done\n");
+ 
+ #ifndef TW_OEM_BUILD
+ 	// Check if system has never been changed
+@@ -508,6 +520,7 @@ int main(int argc, char **argv)
+ 	}
+     }
+ #endif
++  LOGTIME("[boot] system RO check done\n");
+   twrpAdbBuFifo *adb_bu_fifo = new twrpAdbBuFifo();
+   adb_bu_fifo->threadAdbBuFifo();
+ 
+@@ -515,10 +528,13 @@ int main(int argc, char **argv)
+ 
+ // run the postrecoveryboot script here
+ TWFunc::RunFoxScript("/sbin/postrecoveryboot.sh");
++LOGTIME("[boot] postrecoveryboot done\n");
+ #ifndef OF_DEVICE_WITHOUT_PERSIST
+ DataManager::RestorePasswordBackup();
+ #endif
++LOGTIME("[boot] password restore done\n");
+ 
++LOGTIME("[boot] starting GUI\n");
+ #ifdef FOX_OLD_DECRYPT_RELOAD
+   LOGINFO("Using R10 way to reload theme.\n");
+   if (DataManager::GetStrValue("used_custom_encryption") == "1") {

@@ -141,6 +141,7 @@ jobs:
         # 0001-0004: realtime battery, 3-finger screenshot, full factory reset, ORS wipe state.
         # 0005-0007: the "Erasing..." screen for wipes (icon, text, all languages).
         # 0008: fast boot - defer the /data size scan that delays the UI after decryption.
+        # 0009: boot phase timestamps (LOGTIME) + shorter script settle delay.
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue
@@ -159,6 +160,9 @@ jobs:
 
         echo "--- deferred data size scan after patches ---"
         grep -n "quick_data_size\|Data_Size_Pending" partition.cpp partitionmanager.cpp partitions.hpp | head -20 || true
+
+        echo "--- boot timing logs after patches ---"
+        grep -n "LOGTIME" twrp.cpp partitionmanager.cpp gui/gui.cpp | head -12 || true
 
     - name: Setup ccache (incremental, no run_id)
       uses: hendrikmuhs/ccache-action@v1.2.24
