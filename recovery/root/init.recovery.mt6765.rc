@@ -62,13 +62,16 @@ on property:ro.debuggable=1
 # ADB-ONLY gadget. ffs.mtp has no descriptors yet and f_fs fails the whole bind
 # with -ENOTSUPP if a linked function has none, so adb must be alone here. This
 # also keeps ADB working when MTP is disabled - it never waits for the MTP daemon.
+# PID MUST be 0x4ee7 (AOSP adb-only), not 0x4ee2: libmtp's udev rules tag 4ee2 as
+# MTP+ADB, so gvfs on the PC tries to open MTP on the adb-only gadget and pops
+# 'Unable to open MTP device "001,xxx"'. 0x4ee7 is not in libmtp's device list.
 on property:sys.usb.ffs.ready=1 && property:twrp.decrypt.done=true
     write /config/usb_gadget/g1/UDC "none"
     rm /config/usb_gadget/g1/configs/b.1/f1
     rm /config/usb_gadget/g1/configs/b.1/f2
     write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "adb"
     write /config/usb_gadget/g1/idVendor 0x18d1
-    write /config/usb_gadget/g1/idProduct 0x4ee2
+    write /config/usb_gadget/g1/idProduct 0x4ee7
     symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f1
     write /config/usb_gadget/g1/UDC "musb-hdrc"
     setprop sys.usb.state "adb"
@@ -94,13 +97,14 @@ on property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.ffs.ready=1
 # the daemon): drop ffs.mtp and fall back to adb-only, otherwise the PC keeps
 # seeing a dead MTP interface. The decrypt.done condition keeps this from
 # binding USB before the decrypt screen. no_disconnect keeps adbd alive.
+# Same adb-only PID rule as above: 0x4ee7, never 0x4ee2.
 on property:sys.usb.ffs.mtp.ready=0 && property:twrp.decrypt.done=true
     write /config/usb_gadget/g1/UDC "none"
     rm /config/usb_gadget/g1/configs/b.1/f1
     rm /config/usb_gadget/g1/configs/b.1/f2
     write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "adb"
     write /config/usb_gadget/g1/idVendor 0x18d1
-    write /config/usb_gadget/g1/idProduct 0x4ee2
+    write /config/usb_gadget/g1/idProduct 0x4ee7
     symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f1
     write /config/usb_gadget/g1/UDC "musb-hdrc"
     setprop sys.usb.state "adb"
