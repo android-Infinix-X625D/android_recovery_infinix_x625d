@@ -142,6 +142,7 @@ jobs:
         # 0005-0007: the "Erasing..." screen for wipes (icon, text, all languages).
         # 0008: fast boot - defer the /data size scan that delays the UI after decryption.
         # 0009: boot phase timestamps (LOGTIME) + shorter script settle delay.
+        # 0010: per-step timestamps for the remaining post-decrypt startup gap.
         cd fox/bootable/recovery
         for p in "$GITHUB_WORKSPACE"/device-tree/patches/*.patch; do
           [ -e "$p" ] || continue

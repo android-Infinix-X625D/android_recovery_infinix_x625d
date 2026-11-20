@@ -1,0 +1,117 @@
+diff --git a/gui/gui.cpp b/gui/gui.cpp
+index 9d7234a..0355252 100644
+--- a/gui/gui.cpp
++++ b/gui/gui.cpp
+@@ -841,6 +841,7 @@ extern "C" int gui_init(void)
+ 
+ extern "C" int gui_loadResources(void)
+ {
++	LOGTIME("[boot] gui_loadResources enter\n");
+ #ifndef TW_OEM_BUILD
+ 	int check = 0;
+ 	DataManager::GetValue(TW_IS_ENCRYPTED, check);
+@@ -878,6 +879,7 @@ extern "C" int gui_loadResources(void)
+ 		}
+ 
+ 		theme_path += "/Fox/.bin./pa.zip"; 
++		LOGTIME("[boot] settings storage mount done\n");
+ 		if (check || PageManager::LoadPackage("OrangeFox", theme_path, "main"))
+ 		{
+ #endif // ifndef TW_OEM_BUILD
+@@ -890,8 +892,10 @@ extern "C" int gui_loadResources(void)
+ 		}
+ 	}
+ #endif // ifndef TW_OEM_BUILD
++	LOGTIME("[boot] theme package loaded\n");
+ 	// Set the default package
+ 	PageManager::SelectPackage("OrangeFox");
++	LOGTIME("[boot] theme package selected\n");
+ 
+ 	gGuiInitialized = 1;
+ 	return 0;
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index 446641e..0dca70f 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -376,8 +376,11 @@ int TWPartitionManager::Process_Fstab(string Fstab_Filename, bool Display_Error,
+ 		Decrypt_Adopted();
+ 	}
+ #endif
++	LOGTIME("[boot] decrypt tail update start\n");
+ 	Update_System_Details();
++	LOGTIME("[boot] decrypt tail update done\n");
+ 	UnMount_Main_Partitions();
++	LOGTIME("[boot] decrypt tail unmount done\n");
+ #ifdef AB_OTA_UPDATER
+ 	DataManager::SetValue("tw_active_slot", Get_Active_Slot_Display());
+ #endif
+@@ -2029,12 +2032,15 @@ void TWPartitionManager::Update_System_Details(bool quick_data_size)
+ {
+   std::vector < TWPartition * >::iterator iter;
+   int data_size = 0;
++  LOGTIME("[boot] Update_System_Details q=%d start\n", quick_data_size ? 1 : 0);
+   if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
+      gui_msg("update_part_details=Updating partition details...");
+   TWFunc::SetPerformanceMode(true);
+   for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
+     {
++      LOGTIME("[boot] part '%s' size start\n", (*iter)->Mount_Point.c_str());
+       (*iter)->Update_Size(true, quick_data_size);
++      LOGTIME("[boot] part '%s' size done\n", (*iter)->Mount_Point.c_str());
+       if ((*iter)->Can_Be_Mounted)
+ 	{
+ 	  if ((*iter)->Mount_Point == Get_Android_Root_Path())
+@@ -2163,6 +2169,7 @@ void TWPartitionManager::Update_System_Details(bool quick_data_size)
+     }
+   if (!Write_Fstab())
+     LOGERR("Error creating fstab\n");
++  LOGTIME("[boot] Update_System_Details q=%d done\n", quick_data_size ? 1 : 0);
+   return;
+ }
+ 
+@@ -2322,6 +2329,7 @@ void TWPartitionManager::Check_Users_Decryption_Status() {
+ 
+ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
+ #ifdef TW_INCLUDE_CRYPTO
++  LOGTIME("[boot] Decrypt_Device start\n");
+   char crypto_state[PROPERTY_VALUE_MAX], crypto_blkdev[PROPERTY_VALUE_MAX];
+   std::vector<TWPartition*>::iterator iter;
+ 
+diff --git a/twrp.cpp b/twrp.cpp
+index ae4b435..c686f30 100755
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -259,26 +259,33 @@ int main(int argc, char **argv)
+ 
+ 	}
+ 	// End SAR detection
++	LOGTIME("[boot] SAR detect done\n");
+ 
+ 	printf("=> Processing %s\n", fstab_filename.c_str());
+ 	if (!PartitionManager.Process_Fstab(fstab_filename, 1, 0)) {
+ 		LOGERR("Failing out of recovery due to problem with fstab.\n");
+ 		return -1;
+ 	}
++	LOGTIME("[boot] fstab processed\n");
+ 	PartitionManager.Output_Partition_Logging();
++	LOGTIME("[boot] partition logging done\n");
+ 
+         // run the startup script early
+         TWFunc::RunStartupScript();
++	LOGTIME("[boot] startup script done\n");
+ 
+         // use the ROM's fingerprint?
+ 	#ifdef OF_USE_SYSTEM_FINGERPRINT
+         TWFunc::UseSystemFingerprint();
+ 	#endif
++	LOGTIME("[boot] system fingerprint done\n");
+ 
+ 	// Check for and run startup script if script exists
+ 	TWFunc::RunFoxScript("/sbin/runatboot.sh");
++	LOGTIME("[boot] runatboot done\n");
+ 
+ 	// Load up all the resources
++	LOGTIME("[boot] gui_loadResources start\n");
+ 	gui_loadResources();
+ 	LOGTIME("[boot] gui_loadResources done\n");
+ 
